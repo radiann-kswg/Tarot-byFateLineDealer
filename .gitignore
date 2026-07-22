@@ -10,3 +10,7 @@ Thumbs.db
 
 # Reading Log
 readings/
+
+# Misskey Bot
+.env
+bot/state/

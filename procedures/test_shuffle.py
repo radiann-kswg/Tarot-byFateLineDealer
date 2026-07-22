@@ -21,6 +21,12 @@ class ShuffleTests(unittest.TestCase):
     def test_upright_only(self):
         self.assertTrue(all(orientation == "正位置" for _, orientation in shuffle.draw(78, True)))
 
+    def test_spread_counts(self):
+        self.assertEqual(
+            {"one": 1, "two": 2, "three": 3, "hexagram": 7, "celtic": 10},
+            shuffle.SPREAD_COUNTS,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -34,6 +34,10 @@ BADGE_FG = (24, 22, 34)
 TEXT = (236, 232, 224)
 SUBTEXT = (188, 182, 196)
 REVERSED_TAG = (214, 150, 150)
+ATTRIBUTION = (142, 136, 156)      # 出典表記（本文より控えめに）
+
+ATTRIBUTION_SIZE = 16
+ATTRIBUTION_LEADING = 22
 
 FONT_CANDIDATES = {
     False: [
@@ -52,10 +56,19 @@ FONT_CANDIDATES = {
 
 CIRCLED = {i: c for i, c in enumerate("①②③④⑤⑥⑦⑧⑨⑩", start=1)}
 
+# カード画像の出典表記（権利表記＝作者管理領域）。
+# 記載内容の出典は assets/cards-rws/README.md。文言を変えるときは同 README と併せて更新すること。
+# 画像単体で出典が完結するよう、合成画像の最下部に必ず焼き込む。
+ATTRIBUTION_LINES = [
+    "カード画像：Rider–Waite–Smith Tarot (1909) / 画: Pamela Colman Smith・監修: A.E. Waite / パブリックドメイン",
+    "取得元：https://github.com/metabismuth/tarot-json (MIT License)",
+]
+
 # 各スプレッドの位置の意味（凡例に使用）
 POSITION_MEANINGS = {
     "one": {1: "問いへの核心・今のあなたへのメッセージ"},
-    "three": {1: "①", 2: "②", 3: "③"},  # 意味は文脈依存なので番号のみ
+    # two / three は並びの意味が問いに応じて変わるため、凡例では番号バッジのみを示す
+    # （エントリを持たない＝意味なし。凡例側で「番号 カード名」に切り替わる）
     "hexagram": {
         1: "過去", 2: "現在", 3: "未来", 4: "対策・打つ手",
         5: "周囲の状況・環境", 6: "相手の気持ち・本音", 7: "最終的な結論",
@@ -82,12 +95,22 @@ def _font(size, bold=False):
     )
 
 
+def _text_width(text, font):
+    """キャンバス生成前に文字列の描画幅を測る。"""
+    scratch = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    box = scratch.textbbox((0, 0), text, font=font)
+    return box[2] - box[0]
+
+
 def layout(spread):
     """位置番号 -> (中心x, 中心y, 追加回転角) を相対座標で返す。"""
     hg, vg = 74, 44
     pv = CARD_H + vg                      # 縦ピッチ
     if spread == "one":
         return {1: (0, 0, 0)}
+    if spread == "two":
+        px = CARD_W + hg
+        return {1: (0, 0, 0), 2: (px, 0, 0)}
     if spread == "three":
         px = CARD_W + hg
         return {1: (0, 0, 0), 2: (px, 0, 0), 3: (2 * px, 0, 0)}
@@ -174,11 +197,16 @@ def render(cards, spread, title, out_path, root):
     legend_rows = (len(cards) + 1) // 2
     legend_h = 40 + legend_rows * 40 + 30
 
+    # 出典表記フッター（画像単体で出典が完結するように必ず入れる）
+    attribution_font = _font(ATTRIBUTION_SIZE)
+    attribution_w = max(_text_width(line, attribution_font) for line in ATTRIBUTION_LINES)
+    attribution_h = 16 + len(ATTRIBUTION_LINES) * ATTRIBUTION_LEADING + 10
+
     field_w = maxx - minx
     field_h = maxy - miny
     W = int(field_w + margin * 2)
-    W = max(W, 1000)
-    H = int(title_h + field_h + margin + legend_h)
+    W = max(W, 1000, int(attribution_w + margin * 2))  # 出典表記が切れない幅を確保
+    H = int(title_h + field_h + margin + legend_h + attribution_h)
 
     canvas = Image.new("RGBA", (W, H), BG + (255,))
     d = ImageDraw.Draw(canvas)
@@ -227,12 +255,18 @@ def render(cards, spread, title, out_path, root):
         mark = CIRCLED.get(pos, str(pos))
         meaning = meanings.get(pos, "")
         reversed_ = c["orientation"].startswith("逆")
-        label = f"{mark} {meaning}：{c['card']}"
+        label = f"{mark} {meaning}：{c['card']}" if meaning else f"{mark} {c['card']}"
         d.text((x, y), label, fill=TEXT, font=ef)
         tb = d.textbbox((x, y), label, font=ef)
         tag = "（逆位置）" if reversed_ else "（正位置）"
         d.text((tb[2] + 6, y), tag,
                fill=REVERSED_TAG if reversed_ else SUBTEXT, font=ef)
+
+    # 出典表記（権利表記＝作者管理領域。文言は ATTRIBUTION_LINES を参照）
+    ay = ly + legend_rows * 40 + 16
+    for line in ATTRIBUTION_LINES:
+        d.text((margin, ay), line, fill=ATTRIBUTION, font=attribution_font)
+        ay += ATTRIBUTION_LEADING
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -243,7 +277,7 @@ def render(cards, spread, title, out_path, root):
 def main():
     p = argparse.ArgumentParser(description="スプレッドを陣形画像に合成する")
     p.add_argument("--spread", default="celtic",
-                   choices=["one", "three", "hexagram", "celtic"])
+                   choices=list(shuffle.SPREAD_COUNTS))  # 枚数の正本は shuffle.py
     p.add_argument("--json", help="shuffle.py --json の出力ファイル（省略時は標準入力）")
     p.add_argument("--draw", action="store_true",
                    help="shuffle.py と同じ抽選処理でカードを引き、そのまま描画する")

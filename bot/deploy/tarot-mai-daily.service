@@ -1,0 +1,27 @@
+# 錦野舞のタロット執務室 — 「今日の一枚」定期投稿（ワンショット）
+#
+# 単体では起動しません。tarot-mai-daily.timer から呼ばれます。
+#
+#   sudo cp bot/deploy/tarot-mai-daily.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now tarot-mai-daily.timer
+#   systemctl list-timers tarot-mai-daily.timer
+
+[Unit]
+Description=Tarot Mai Misskey Bot (daily one-card post)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=tarot
+Group=tarot
+WorkingDirectory=/opt/tarot-mai
+EnvironmentFile=/opt/tarot-mai/.env
+ExecStart=/opt/tarot-mai/.venv/bin/python -m bot.daily --live
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/tarot-mai/bot/state /opt/tarot-mai/readings

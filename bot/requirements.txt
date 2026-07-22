@@ -1,0 +1,8 @@
+# 錦野舞のタロット執務室 — Misskey Bot
+anthropic>=0.117
+requests>=2.31
+python-dotenv>=1.0
+Pillow>=10.0
+
+# 開発用（テスト実行に必要）
+pytest>=8.0

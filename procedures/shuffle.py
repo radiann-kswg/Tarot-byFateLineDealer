@@ -20,7 +20,7 @@ SUITS = {"ワンド": "火", "カップ": "水", "ソード": "風", "ペンタ�
 RANKS = ["エース", "2", "3", "4", "5", "6", "7", "8", "9", "10",
          "ペイジ", "ナイト", "クイーン", "キング"]
 
-SPREAD_COUNTS = {"one": 1, "three": 3, "hexagram": 7, "celtic": 10}
+SPREAD_COUNTS = {"one": 1, "two": 2, "three": 3, "hexagram": 7, "celtic": 10}
 
 MAJOR_IMAGES = {name: f"m{i:02d}.jpg" for i, name in enumerate(MAJOR)}
 SUIT_IMAGE_PREFIX = {"ワンド": "w", "カップ": "c", "ソード": "s", "ペンタクル": "p"}
@@ -65,7 +65,7 @@ def main():
     p = argparse.ArgumentParser(description="タロットを公正に引く")
     p.add_argument("--count", type=int, help="引く枚数")
     p.add_argument("--spread", choices=SPREAD_COUNTS.keys(),
-                   help="one / three / hexagram / celtic")
+                   help="one / two / three / hexagram / celtic")
     p.add_argument("--upright-only", action="store_true", help="正位置のみ")
     p.add_argument("--json", action="store_true", help="画像パス付きJSONで出力")
     args = p.parse_args()
