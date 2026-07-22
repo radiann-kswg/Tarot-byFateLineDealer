@@ -26,7 +26,7 @@ python3 procedures/shuffle.py --count 3
 # 逆位置なし（正位置のみ）
 python3 procedures/shuffle.py --count 3 --upright-only
 
-# スプレッド名を指定（1 / 3 / hexagram=7 / celtic=10 のいずれかの枚数）
+# スプレッド名を指定（one=1 / two=2 / three=3 / hexagram=7 / celtic=10）
 python3 procedures/shuffle.py --spread celtic
 
 # 画像パスを含む機械可読形式
@@ -41,9 +41,13 @@ python3 procedures/shuffle.py --count 3 --json
 **カード画像の提示ルール（枚数で切り替える）**
 
 - **ワンオラクル（1枚）**：カード画像を1枚そのまま提示する。
-- **3枚以上のスプレッド（スリーカード／ヘキサグラム／ケルト十字）**：1枚ずつではなく、
+- **2枚以上のスプレッド（ツーカード／スリーカード／ヘキサグラム／ケルト十字）**：1枚ずつではなく、
   `render_spread.py` で**陣形のまま1枚に合成した全体画像**を提示する。位置関係（交差・過去/未来・
   スタッフ等）が意味を持つため、並びごと見せることを優先する。
+
+> **Misskey Bot の場合は例外**：枚数によらず**常に `render_spread.py` の合成画像だけ**を添付する
+> （生のカードJPGは投稿しない）。合成画像にはカード画像の出典表記が焼き込まれるため、
+> 1枚引きでも合成を通すことで出典が画像単体で完結する。詳細は [`AGENTS.md`](../AGENTS.md) §6。
 
 ```bash
 # 例：ケルト十字を引いて、そのまま陣形画像に合成する
@@ -54,7 +58,8 @@ python3 procedures/shuffle.py --spread celtic --json \
 
 `render_spread.py` は `shuffle.py --json` の出力（position / card / orientation / image）を
 そのまま受け取り、逆位置は自動で180°回転、ケルト十字の②は①に交差させて描く。
-one / three / hexagram / celtic に対応。独自のカード選択ロジックは重ねない。
+one / two / three / hexagram / celtic に対応。独自のカード選択ロジックは重ねない。
+合成画像の最下部には、カード画像の出典表記が自動で焼き込まれる。
 
 Windows PowerShell ではパイプ時に UTF-8 の JSON が変換されることがあるため、次の一体型コマンドを使う。
 `--draw` は `shuffle.py` の共通関数を呼ぶだけで、別の抽選ロジックは持たない。読み解くカードは

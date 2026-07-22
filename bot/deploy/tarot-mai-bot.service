@@ -1,0 +1,37 @@
+# 錦野舞のタロット執務室 — メンション応答の常駐（systemd）
+#
+#   sudo cp bot/deploy/tarot-mai-bot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now tarot-mai-bot
+#   sudo journalctl -u tarot-mai-bot -f
+#
+# 配置先とユーザー名は環境に合わせて書き換えてください。
+
+[Unit]
+Description=Tarot Mai Misskey Bot (mention replies)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tarot
+Group=tarot
+WorkingDirectory=/opt/tarot-mai
+EnvironmentFile=/opt/tarot-mai/.env
+ExecStart=/opt/tarot-mai/.venv/bin/python -m bot.main --live
+Restart=always
+RestartSec=15
+
+# 落ちても止まらないが、短時間に落ち続けるときは諦める
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# 最小権限で動かす
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/tarot-mai/bot/state /opt/tarot-mai/readings
+
+[Install]
+WantedBy=multi-user.target

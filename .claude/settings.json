@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "cat \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/roleplay-guard.json\"",
+            "timeout": 5,
+            "statusMessage": "正本（SSOT）を確認しています"
+          }
+        ]
+      }
+    ]
+  }
+}
