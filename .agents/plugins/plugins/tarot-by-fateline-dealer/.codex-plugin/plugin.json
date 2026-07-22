@@ -1,0 +1,22 @@
+{
+  "name": "tarot-by-fateline-dealer",
+  "version": "0.2.0",
+  "description": "錦野舞のタロット執務室をCodexから利用するための薄いアダプター",
+  "author": {
+    "name": "百花繚乱研究所"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "錦野舞のタロット執務室",
+    "shortDescription": "共有データと公正な抽選手順でタロット占いを行います。",
+    "longDescription": "プロジェクト内の共通資料、RWS仮画像、公正な抽選スクリプトを参照するCodex用アダプターです。占いの正本はプロジェクト側に保ちます。",
+    "developerName": "百花繚乱研究所",
+    "category": "Productivity",
+    "capabilities": ["Tarot reading", "Local assets"],
+    "defaultPrompt": [
+      "今日の運勢をワンオラクルで占って。",
+      "過去・現在・未来の3枚で見て。",
+      "この悩みに合うスプレッドを提案して。"
+    ]
+  }
+}

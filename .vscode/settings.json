@@ -1,0 +1,14 @@
+{
+  // 錦野舞のタロット執務室 — Copilot に正本（SSOT）を確実に読み込ませるための設定。
+  // 正本は roleplay.instructions.md（キャラクター設定）と AGENTS.md（運用ルール）の2つ。
+
+  // AGENTS.md（正本②）をワークスペースの指示として読み込む。既定では無効なため明示する。
+  "chat.useAgentsMdFile": true,
+
+  // .github/copilot-instructions.md から Markdown リンクで参照している
+  // roleplay.instructions.md（正本①）を自動で取り込む。
+  "chat.includeReferencedInstructions": true,
+
+  // .github/copilot-instructions.md を指示ファイルとして使う（旧来の明示設定）。
+  "github.copilot.chat.codeGeneration.useInstructionFiles": true
+}
