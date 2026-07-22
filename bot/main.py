@@ -87,28 +87,40 @@ def perform_reading(config: Config, theme: str, slug: str, spread: str | None = 
     return body, image_path, meta
 
 
-def _publish(client: Misskey, live: bool, body: str, image_path, alt_text: str,
-             reply_id: str | None) -> None:
-    """投稿する。dry-run のときは標準出力に出すだけ。"""
+def _reading_cw(config: Config, spread_label: str) -> str | None:
+    """占い結果を畳むための CW 見出し（AGENTS.md §6.1-3）。文面の正本は §6.3。"""
+    if not config.fold_reading:
+        return None
+    return ssot.template("cw-reading", spread=spread_label)
+
+
+def _publish(client: Misskey | None, live: bool, body: str, image_path, alt_text: str,
+             reply_id: str | None, cw: str | None = None) -> None:
+    """投稿する。dry-run のときは標準出力に出すだけ（client は使わないので None でよい）。"""
     if not live:
         print("\n" + "=" * 72)
         print(f"[dry-run] 返信先: {reply_id or '(なし・単独投稿)'}")
         print(f"[dry-run] 添付画像: {image_path}")
         print(f"[dry-run] 画像の説明: {alt_text}")
+        print(f"[dry-run] CW（畳む見出し）: {cw or '(畳まない)'}")
         print("-" * 72)
         print(body)
         print("=" * 72 + "\n")
         return
     file_ids = [client.upload(image_path, comment=alt_text)] if image_path else None
-    note = client.create_note(body, reply_id=reply_id, file_ids=file_ids)
-    log.info("投稿しました: %s", note.get("id", "(id不明)"))
+    note = client.create_note(body, reply_id=reply_id, file_ids=file_ids, cw=cw)
+    log.info("投稿しました: %s（CW=%s）", note.get("id", "(id不明)"), "あり" if cw else "なし")
 
 
 def _reply_template(client: Misskey, config: Config, live: bool, template_id: str,
                     reply_id: str) -> None:
-    """定型文で返す（占わない分岐）。文面の正本は AGENTS.md §6.3。"""
+    """定型文で返す（占わない分岐）。文面の正本は AGENTS.md §6.3。
+
+    **これらは CW で畳まない**（AGENTS.md §6.1-3）。つらいときや不具合のときに、
+    ワンクリック挟ませないため。
+    """
     body = ssot.template(template_id, support_url=config.support_url)
-    _publish(client, live, body, None, "", reply_id)
+    _publish(client, live, body, None, "", reply_id, cw=None)
 
 
 def handle_notification(config: Config, client: Misskey, state: state_mod.State,
@@ -142,7 +154,8 @@ def handle_notification(config: Config, client: Misskey, state: state_mod.State,
         _reply_template(client, config, live, verdict.template, note_id)
     else:
         body, image_path, meta = perform_reading(config, theme, slug=notification_id)
-        _publish(client, live, body, image_path, meta["alt_text"], note_id)
+        _publish(client, live, body, image_path, meta["alt_text"], note_id,
+                 cw=_reading_cw(config, meta["spread_label"]))
         if live and config.save_readings:
             saved = state_mod.save_reading(theme, meta["spread_label"], meta["summary"], body)
             log.info("[%s] 記録を保存しました: %s", notification_id, saved)
@@ -159,6 +172,9 @@ def run_once(config: Config, client: Misskey, state: state_mod.State, live: bool
     since_id = state.last_notification_id
     notifications = client.notifications(since_id, limit=limit, mark_as_read=live)
     if not notifications:
+        log.info("新しいメンション・リプライはありません（sinceId=%s）。"
+                 "Bot 宛にメンションしてから、もう一度試してください。", since_id or "なし")
+        log.info("読み解きだけ先に確かめたいときは: py -m bot.main --simulate \"相談文\"")
         return 0
 
     newest = notifications[-1]["id"]
@@ -220,6 +236,7 @@ def run_loop(config: Config, client: Misskey, state: state_mod.State, live: bool
 
 def cmd_check(config: Config, client: Misskey) -> int:
     """疎通確認。投稿もAPI課金もしない。"""
+    log.info("設定の読み込み元: %s", config.env_file or "（環境変数のみ）")
     account = client.me()
     is_bot = account.get("isBot")
     log.info("Misskey: @%s（%s）に接続できました", account.get("username"), config.misskey_host)
@@ -240,6 +257,26 @@ def cmd_check(config: Config, client: Misskey) -> int:
     return 0
 
 
+def cmd_simulate(config: Config, text: str, spread: str | None) -> int:
+    """メンションを待たずに、読み解きの中身だけを確かめる。
+
+    Misskey には一切触れない（通知も読まないし投稿もしない）。Claude API は呼ぶので課金は発生する。
+    正本を編集したあと、応答の調子が変わったかを見るのにも使える。
+    """
+    log.info("シミュレーション（Misskey には接続しません）")
+    verdict = safety.screen(text)
+    if verdict.action != "read":
+        log.warning("%s に該当（%s）。占わずに定型応答します", verdict.action, verdict.matched)
+        body = ssot.template(verdict.template, support_url=config.support_url)
+        _publish(None, False, body, None, "", reply_id=None)
+        return 0
+
+    body, image_path, meta = perform_reading(config, text, slug="simulate", spread=spread)
+    _publish(None, False, body, image_path, meta["alt_text"], reply_id=None,
+             cw=_reading_cw(config, meta["spread_label"]))
+    return 0
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="bot.main",
@@ -252,6 +289,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                       help="投稿せず、返信本文と画像パスを標準出力に出す（既定）")
     parser.add_argument("--check", action="store_true",
                         help="疎通確認だけ行って終了する（投稿もAPI課金もしない）")
+    parser.add_argument("--simulate", metavar="相談文",
+                        help="メンションを待たずに、その相談文で読み解きだけ試す"
+                             "（Misskey には接続しない。Claude API は呼ぶので課金あり）")
+    parser.add_argument("--spread", choices=list(tarot.SPREAD_LABELS),
+                        help="--simulate でスプレッドを指定する（省略時は舞が選ぶ）")
     parser.add_argument("--once", action="store_true", help="1回だけポーリングして終了する")
     parser.add_argument("--limit", type=int, default=10,
                         help="1回のポーリングで取得する通知の最大件数（既定: 10）")
@@ -269,8 +311,12 @@ def main(argv: list[str] | None = None) -> int:
         log.error("%s", exc)
         return 2
 
-    client = Misskey(config)
     try:
+        # Misskey に触れない経路は、クライアントを作る前に処理する
+        if args.simulate:
+            return cmd_simulate(config, args.simulate, args.spread)
+
+        client = Misskey(config)
         if args.check:
             return cmd_check(config, client)
 

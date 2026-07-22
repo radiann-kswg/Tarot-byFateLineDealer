@@ -64,6 +64,15 @@ class RenderSpreadTests(unittest.TestCase):
                     self.assertTrue(any(low != high for low, high in extrema),
                                     "出典表記の帯が背景一色になっています")
 
+    def test_long_title_is_trimmed_to_the_canvas(self):
+        """長い相談テーマを載せてもタイトルが画像からはみ出さないこと。"""
+        font = render_spread._font(34, bold=True)
+        fitted = render_spread._fit("あ" * 200, font, 600)
+        self.assertLessEqual(render_spread._text_width(fitted, font), 600)
+        self.assertTrue(fitted.endswith("…"))
+        # 収まる文字列はそのまま返す
+        self.assertEqual("短い題", render_spread._fit("短い題", font, 600))
+
     def test_two_card_layout(self):
         """2枚引きも陣形画像にできること（Misskey 向けの仕様変更）。"""
         self.assertIn("two", shuffle.SPREAD_COUNTS)

@@ -14,7 +14,7 @@ from datetime import datetime
 
 from . import state as state_mod
 from .config import ConfigError, load_config
-from .main import perform_reading, setup_logging, _publish
+from .main import perform_reading, setup_logging, _publish, _reading_cw
 from .misskey import Misskey, MisskeyError
 from .reading import ReadingError
 from .ssot import SsotError
@@ -64,7 +64,8 @@ def main(argv: list[str] | None = None) -> int:
         body, image_path, meta = perform_reading(
             config, DAILY_THEME, slug=f"daily-{date_key}", spread=DAILY_SPREAD,
         )
-        _publish(client, live, body, image_path, meta["alt_text"], reply_id=None)
+        _publish(client, live, body, image_path, meta["alt_text"], reply_id=None,
+                 cw=_reading_cw(config, meta["spread_label"]))
         if live:
             state.mark_daily_posted(date_key)
             state.save()

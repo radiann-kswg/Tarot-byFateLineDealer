@@ -70,12 +70,27 @@ Claude には「もう引かれたカード」を渡すだけです。Claude に
 
 ### 4. `.env` の作成
 
+置き場所は**リポジトリ直下と `bot/` のどちらでも構いません**（この順に探します）。
+
 ```bash
-cp bot/.env.example .env    # リポジトリのルートに置く
+cp bot/.env.example .env        # リポジトリ直下
+# または
+cp bot/.env.example bot/.env    # テンプレートの隣
 ```
 
-値の意味は `bot/.env.example` のコメントを読んでください。**`.env` はコミットしないこと**（`.gitignore` 済み）。
-Linux では `chmod 600 .env` を推奨します。
+値の意味は `bot/.env.example` のコメントを読んでください。**`.env` はコミットしないこと**
+（どちらの場所でも `.gitignore` 済み）。Linux では `chmod 600` を推奨します。
+
+どちらを読み込んだかは `--check` の1行目に出ます。
+
+```
+2026-07-22 13:30:00 INFO 設定の読み込み元: D:\...\Tarot-byFateLineDealer\bot\.env
+```
+
+> **占い結果は CW（内容注意）で畳んで投稿されます**（`MISSKEY_FOLD_READING=1`、既定で有効）。
+> 見出しの文面は `AGENTS.md` §6.3 の `cw-reading` にあります。
+> **自傷検知時の応答・ロールプレイ停止・おわびの定型文は、この設定にかかわらず畳みません。**
+> つらいときや不具合のときに、ワンクリック挟ませないためです（AGENTS.md §6.1-3）。
 
 > ⚠️ `SUPPORT_RESOURCE_URL` は、自傷・他害を検知したときの定型応答に差し込まれ、
 > **公開投稿へそのまま載ります。** 既定は厚生労働省「まもろうよ こころ」ですが、
@@ -109,20 +124,26 @@ sudo apt install -y fonts-noto-cjk
 
 ## 起動と動作確認
 
+> ⚠️ **必ずリポジトリのルートで実行してください。**
+> `python -m bot.main` は `bot/` の**親ディレクトリ**が `sys.path` に必要なので、
+> `cd bot` した状態では `ModuleNotFoundError: No module named 'bot'` になります。
+
 Windows のこの環境では、PATH 上の `python` は Microsoft Store のスタブなので
 **`py` ランチャー**を使ってください。
 
 ```powershell
+cd "d:\Claude Coworks Projectfile\Tarot-byFateLineDealer"   # ← ルートで実行する
 py -m pip install -r bot/requirements.txt
 
-py -m pytest procedures/ bot/ -q      # テスト
-py -m bot.main --check                # 疎通確認（投稿もAPI課金もしない）
-py -m bot.main --once --dry-run       # 1件だけ処理して結果を標準出力
-py -m bot.main --once --live          # 1件だけ実投稿
-py -m bot.main --live                 # 常駐
+py -m pytest procedures/ bot/ -q          # テスト
+py -m bot.main --check                    # 疎通確認（投稿もAPI課金もしない）
+py -m bot.main --simulate "相談文"         # メンションを待たずに読み解きだけ試す
+py -m bot.main --once --dry-run           # 通知を1件だけ処理して結果を標準出力
+py -m bot.main --once --live              # 1件だけ実投稿
+py -m bot.main --live                     # 常駐
 
-py -m bot.daily --dry-run             # 今日の一枚（確認）
-py -m bot.daily --live                # 今日の一枚（投稿）
+py -m bot.daily --dry-run                 # 今日の一枚（確認）
+py -m bot.daily --live                    # 今日の一枚（投稿）
 ```
 
 Linux / macOS では `py` を `.venv/bin/python` などに読み替えてください。
@@ -132,6 +153,8 @@ Linux / macOS では `py` を `.venv/bin/python` などに読み替えてくだ�
 | 引数 | 意味 |
 | --- | --- |
 | `--check` | Misskey と Anthropic の疎通確認だけ行う。投稿もAPI課金もしない |
+| `--simulate "相談文"` | メンションを待たずに、その相談文で読み解きだけ試す。**Misskey には接続しない**（通知も読まない・投稿もしない）。Claude API は呼ぶので課金あり |
+| `--spread NAME` | `--simulate` でスプレッドを指定（`one` / `two` / `three` / `hexagram` / `celtic`）。省略時は舞が選ぶ |
 | `--dry-run` | **既定。** 投稿せず、返信本文と画像パスを標準出力に出す |
 | `--live` | 実際に投稿する。明示指定が必要 |
 | `--once` | 1回だけポーリングして終了 |
@@ -145,6 +168,11 @@ Linux / macOS では `py` を `.venv/bin/python` などに読み替えてくだ�
 > 状態ファイルも進めません。そのぶん Claude API は実際に呼ぶので**課金は発生します**。
 > 課金なしで確かめたいときは `--check` を使ってください。
 
+> **`0 件処理しました` と出るのは正常な場合があります。** Bot 宛の `mention` / `reply` の通知が
+> 無いときはこれが出ます（`follow` や `login` の通知は対象外）。
+> 別アカウントから Bot にメンションしてから、もう一度実行してください。
+> メンションを待たずに読み解きだけ確かめたいときは `--simulate` を使います。
+
 ---
 
 ## ロールアウト（段階的に外へ出す）
@@ -154,8 +182,9 @@ Linux / macOS では `py` を `.venv/bin/python` などに読み替えてくだ�
 | # | コマンド | 確認すること |
 | --- | --- | --- |
 | 1 | `--check` | トークンの権限が足りているか。`isBot` が立っているか |
-| 2 | `--once --dry-run` | 抽選・画像・読み解き文が意図通りか。画像に出典2行が入っているか |
-| 3 | `--once --live`（`MISSKEY_VISIBILITY=home`） | 投稿・画像添付・リプライ先が正しいか |
+| 2 | `--simulate "相談文"` | 抽選・画像・読み解き文が意図通りか。画像に出典2行が入っているか |
+| 3 | `--once --dry-run` | 実際のメンションを拾えるか（**先に別アカウントから Bot 宛メンションを送っておくこと**） |
+| 4 | `--once --live`（`MISSKEY_VISIBILITY=home`） | 投稿・画像添付・リプライ先が正しいか |
 | 4 | `--live` 常駐（`home` のまま数日） | 重複返信がないか。クールダウンが効いているか |
 | 5 | `MISSKEY_VISIBILITY=public` に変更 | 公開範囲を広げる |
 | 6 | `bot.daily` を timer / タスクに登録 | 定期投稿が1日1回だけ走るか |
@@ -252,14 +281,18 @@ docker run -d --name tarot-mai --restart unless-stopped \
 システムプロンプトの安定部は **約 14,900 文字**（実測値。内訳は正本① 3.7k / 正本② 6.6k /
 手順書 2.7k / スプレッド資料 1.3k）で、これが毎回の入力に乗ります。
 
-**トークン数は実測してください。** 日本語のトークン化は文字数と単純比例しないので、
-ここに換算値は書きません。`--once --dry-run` を1回流すと、ログに実際の値が出ます。
+実測例（スリーカード1回・キャッシュミス時）。ログにこの値が出ます。
 
 ```
-2026-07-22 12:00:00 INFO スプレッド=ケルト十字(...) カード=... / in=15234 out=1876 cache_read=0 cache_write=15234
+INFO スプレッド=スリーカード(...) カード=... / in=491 out=753 cache_read=0 cache_write=12391
 ```
 
-この `in` と `out` に上の単価を掛ければ1回あたりの実費が出ます。
+- 入力 12,882 トークン（安定部 12,391 ＋ 可変部 491）× $5/1M ≒ **$0.064**
+- 出力 753 トークン × $25/1M ≒ **$0.019**
+- 合計 **≒ $0.08 / 回**
+
+キャッシュが効けば安定部が 1/10 の単価になるので、**$0.03 前後**まで下がります。
+枚数の多いスプレッドは出力が伸びるぶん少し高くなります。
 
 プロンプトキャッシュの既定TTLは5分なので、**低頻度の Bot ではほとんどのリクエストが
 キャッシュミスになります**（`cache_read=0`・`cache_write` に全量）。連投がある時間帯にだけ効く、
@@ -274,7 +307,9 @@ docker run -d --name tarot-mai --restart unless-stopped \
 
 | 症状 | 原因と対処 |
 | --- | --- |
-| `必須の環境変数が設定されていません` | `.env` がリポジトリのルートに無い、または値が空 |
+| `ModuleNotFoundError: No module named 'bot'` | `bot/` の中で実行している。**リポジトリのルートに戻って**から `py -m bot.main ...` |
+| `0 件処理しました` が続く | Bot 宛の `mention` / `reply` 通知が無いだけ。別アカウントからメンションを送る。読み解きの確認は `--simulate` |
+| `必須の環境変数が設定されていません` | エラー本文に「探した場所」か「読み込んだファイル」が出ます。前者なら `.env` の置き場所（リポジトリ直下か `bot/`）、後者なら値の空欄・キー名の綴りを確認 |
 | `陣形画像の生成に失敗しました` | 日本語フォントが無い。`fonts-noto-cjk` を入れるか `TAROT_SPREAD_FONT` を指定 |
 | `i/notifications が 401 を返しました` | トークンが無効。権限4つが付いているか確認 |
 | `drive/files/create が 403` | 「ドライブを操作する」権限が付いていない |

@@ -102,6 +102,16 @@ def _text_width(text, font):
     return box[2] - box[0]
 
 
+def _fit(text, font, max_width):
+    """max_width に収まるよう末尾を省略する（はみ出して切れるのを防ぐ）。"""
+    if _text_width(text, font) <= max_width:
+        return text
+    trimmed = text
+    while trimmed and _text_width(trimmed + "…", font) > max_width:
+        trimmed = trimmed[:-1]
+    return trimmed + "…" if trimmed else "…"
+
+
 def layout(spread):
     """位置番号 -> (中心x, 中心y, 追加回転角) を相対座標で返す。"""
     hg, vg = 74, 44
@@ -214,7 +224,7 @@ def render(cards, spread, title, out_path, root):
     # タイトル
     if title:
         tf = _font(34, bold=True)
-        d.text((margin, 30), title, fill=TEXT, font=tf)
+        d.text((margin, 30), _fit(title, tf, W - margin * 2), fill=TEXT, font=tf)
     d.line([(margin, title_h - 8), (W - margin, title_h - 8)], fill=(70, 64, 88), width=2)
 
     # フィールドのオフセット（中央寄せ）

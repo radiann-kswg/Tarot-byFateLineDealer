@@ -16,7 +16,7 @@ from bot.config import Config
 from bot.reading import Reading, ReadingError
 
 
-def make_config(state_path: Path, cooldown: int = 60) -> Config:
+def make_config(state_path: Path, cooldown: int = 60, fold_reading: bool = True) -> Config:
     return Config(
         misskey_host="https://example.test",
         misskey_token="token",
@@ -32,6 +32,8 @@ def make_config(state_path: Path, cooldown: int = 60) -> Config:
         save_readings=False,
         state_path=state_path,
         request_timeout=30,
+        fold_reading=fold_reading,
+        env_file=None,
     )
 
 
@@ -56,11 +58,17 @@ class FakeMisskey:
         return f"file-{len(self.uploaded)}"
 
     def create_note(self, text, reply_id=None, file_ids=None, cw=None) -> dict:
-        self.notes.append({"text": text, "replyId": reply_id, "fileIds": file_ids})
+        self.notes.append({"text": text, "replyId": reply_id, "fileIds": file_ids, "cw": cw})
         return {"id": f"note-created-{len(self.notes)}"}
 
 
-class HandleNotificationTests(unittest.TestCase):
+class ReadingCaseMixin:
+    """通知処理のテスト用の下ごしらえ。Claude API と Misskey は差し替える。
+
+    TestCase を継承しないので、これ自体はテストとして収集されない
+    （継承側の TestCase でだけ実行される）。
+    """
+
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         root = Path(self._tmp.name)
@@ -94,6 +102,8 @@ class HandleNotificationTests(unittest.TestCase):
     def handle(self, notif, live=True):
         return main_mod.handle_notification(self.config, self.client, self.state, notif, live)
 
+
+class HandleNotificationTests(ReadingCaseMixin, unittest.TestCase):
     def test_normal_consultation_posts_a_reading_with_one_image(self):
         self.assertTrue(self.handle(notification("@mai 恋愛のことで悩んでいます")))
         self.assertEqual(1, len(self.client.notes))
@@ -177,6 +187,70 @@ class RunOnceTests(unittest.TestCase):
         self.assertEqual([], client.notes)
         # 次回からは sinceId で絞れるよう、最新IDだけ覚えておく
         self.assertEqual("notif-3", self.state.last_notification_id)
+
+
+class FoldingTests(ReadingCaseMixin, unittest.TestCase):
+    """占い結果は畳み、つらいときの応答は畳まない（AGENTS.md §6.1-3）。"""
+
+    def test_reading_is_folded(self):
+        self.handle(notification("恋愛のことで悩んでいます"))
+        cw = self.client.notes[0]["cw"]
+        self.assertIsNotNone(cw, "占い結果が畳まれていない")
+        self.assertIn("ヘキサグラム", cw, "CW にスプレッド名が入っていない")
+
+    def test_safety_block_is_never_folded(self):
+        """つらいときにワンクリック挟ませない。ここは畳んではいけない。"""
+        self.handle(notification("もう死にたい"))
+        self.assertIsNone(self.client.notes[0]["cw"])
+
+    def test_roleplay_off_is_never_folded(self):
+        self.handle(notification("ロールプレイをやめて"))
+        self.assertIsNone(self.client.notes[0]["cw"])
+
+    def test_folding_can_be_disabled(self):
+        self.config = make_config(self.config.state_path, fold_reading=False)
+        self.handle(notification("恋愛のことで悩んでいます"))
+        self.assertIsNone(self.client.notes[0]["cw"])
+
+
+class SimulateTests(unittest.TestCase):
+    """--simulate は Misskey に一切触れないこと。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        self.config = make_config(root / "state.json")
+
+        self._original_image_dir = tarot.IMAGE_DIR
+        tarot.IMAGE_DIR = root / "images"
+
+        self._original_generate = reading_mod.generate
+        self.generate_calls: list[dict] = []
+
+        def fake_generate(config, theme, spread, reason, cards, sensitive):
+            self.generate_calls.append({"theme": theme, "spread": spread})
+            return Reading(text="（読み解き）", input_tokens=1, output_tokens=1,
+                           cache_read_tokens=0, cache_write_tokens=1)
+
+        reading_mod.generate = fake_generate
+
+    def tearDown(self):
+        tarot.IMAGE_DIR = self._original_image_dir
+        reading_mod.generate = self._original_generate
+        self._tmp.cleanup()
+
+    def test_runs_a_reading_without_a_client(self):
+        self.assertEqual(0, main_mod.cmd_simulate(self.config, "恋愛について占って", None))
+        self.assertEqual(1, len(self.generate_calls))
+        self.assertEqual("恋愛について占って", self.generate_calls[0]["theme"])
+
+    def test_spread_can_be_forced(self):
+        main_mod.cmd_simulate(self.config, "今日はどう？", "celtic")
+        self.assertEqual("celtic", self.generate_calls[0]["spread"])
+
+    def test_blocked_topic_skips_the_reading(self):
+        self.assertEqual(0, main_mod.cmd_simulate(self.config, "もう死にたい", None))
+        self.assertEqual([], self.generate_calls)
 
 
 class ClampTests(unittest.TestCase):

@@ -53,9 +53,11 @@ python3 procedures/render_spread.py --draw --spread celtic \
 抽選 → 陣形画像の生成 → Claude API での読み解き → 画像つき返信、までを自動で行います。
 
 ```powershell
+# リポジトリのルートで実行すること（bot/ の中からは動きません）
 py -m pip install -r bot/requirements.txt
 py -m bot.main --check             # 疎通確認（投稿もAPI課金もしない）
-py -m bot.main --once --dry-run    # 1件だけ処理して結果を確認（既定）
+py -m bot.main --simulate "相談文"  # メンションを待たずに読み解きだけ試す
+py -m bot.main --once --dry-run    # 実際のメンションを1件だけ処理して確認（既定）
 py -m bot.main --live              # 常駐して実投稿
 ```
 

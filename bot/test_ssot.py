@@ -59,7 +59,7 @@ class TemplateTests(unittest.TestCase):
     def test_required_templates_exist(self):
         templates = ssot.load_templates()
         for template_id in ("safety-block", "expert-note", "roleplay-off",
-                            "api-error", "unpublished-setting"):
+                            "api-error", "unpublished-setting", "cw-reading"):
             with self.subTest(template_id=template_id):
                 self.assertIn(template_id, templates)
                 self.assertTrue(templates[template_id].strip())
@@ -68,6 +68,12 @@ class TemplateTests(unittest.TestCase):
         body = ssot.template("safety-block", support_url="https://example.test/")
         self.assertIn("https://example.test/", body)
         self.assertNotIn("{support_url}", body)
+
+    def test_cw_is_short_enough_for_misskey(self):
+        """Misskey の CW は100字まで。長いスプレッド名を入れても収まること。"""
+        body = ssot.template("cw-reading", spread="ヘキサグラム")
+        self.assertLessEqual(len(body), 100)
+        self.assertIn("ヘキサグラム", body)
 
     def test_unknown_template_raises(self):
         with self.assertRaises(ssot.SsotError):
