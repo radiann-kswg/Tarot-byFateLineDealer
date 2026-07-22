@@ -12,6 +12,11 @@ Description=Tarot Mai Misskey Bot (mention replies)
 After=network-online.target
 Wants=network-online.target
 
+# 落ちても止まらないが、短時間に落ち続けるときは諦める
+# （このレート制限のキーは [Unit] 側に置く。[Service] に書くと無視される）
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
 [Service]
 Type=simple
 User=tarot
@@ -21,10 +26,6 @@ EnvironmentFile=/opt/tarot-mai/.env
 ExecStart=/opt/tarot-mai/.venv/bin/python -m bot.main --live
 Restart=always
 RestartSec=15
-
-# 落ちても止まらないが、短時間に落ち続けるときは諦める
-StartLimitIntervalSec=300
-StartLimitBurst=5
 
 # 最小権限で動かす
 NoNewPrivileges=true

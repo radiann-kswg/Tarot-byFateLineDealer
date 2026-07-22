@@ -19,7 +19,7 @@
 3. ローカルの `gcloud` CLI にログイン（VMへの `scp`/`ssh` に使う）。
    ```bash
    gcloud auth login
-   gcloud config set project <PROJECT_ID>
+   gcloud config set project fateline-investigators-service
    ```
 
 ---
@@ -28,7 +28,7 @@
 
 | 項目 | 値 |
 | --- | --- |
-| 名前 | `tarot-mai-bot` |
+| 名前 | `fli-tarot-bot` |
 | ゾーン | `asia-northeast1-a`（東京） |
 | マシンタイプ | `e2-small` |
 | イメージ | `debian-12`（`debian-cloud`） |
@@ -36,8 +36,8 @@
 同等の gcloud コマンド（手動で作る場合の参考）:
 
 ```bash
-gcloud compute instances create tarot-mai-bot \
-  --project=<PROJECT_ID> --zone=asia-northeast1-a \
+gcloud compute instances create fli-tarot-bot \
+  --project=fateline-investigators-service --zone=asia-northeast1-a \
   --machine-type=e2-small --image-family=debian-12 --image-project=debian-cloud
 ```
 
@@ -47,8 +47,8 @@ gcloud compute instances create tarot-mai-bot \
 
 ```bash
 # ローカルの .env を VM の ~/.env へ（中身は表示されない）
-gcloud compute scp bot/.env tarot-mai-bot:~/.env \
-  --project=<PROJECT_ID> --zone=asia-northeast1-a
+gcloud compute scp bot/.env fli-tarot-bot:~/.env \
+  --project=fateline-investigators-service --zone=asia-northeast1-a
 ```
 
 > `MISSKEY_VISIBILITY=home` のまま送ること（最初は控えめに公開）。安定確認後に `public` へ。
@@ -59,7 +59,7 @@ VM に入り、`main` から取得したスクリプトで環境を一括構築�
 **このスクリプトは Bot を自動起動しない**ので、この時点では何も投稿されない。
 
 ```bash
-gcloud compute ssh tarot-mai-bot --project=<PROJECT_ID> --zone=asia-northeast1-a
+gcloud compute ssh fli-tarot-bot --project=fateline-investigators-service --zone=asia-northeast1-a
 
 # ↓ VM の中で
 curl -fsSL https://raw.githubusercontent.com/radiann-kswg/Tarot-byFateLineDealer/main/bot/deploy/provision.sh \
@@ -88,6 +88,8 @@ sudo systemctl enable --now tarot-mai-bot
 sudo journalctl -u tarot-mai-bot -f
 # 5) 「今日の一枚」定期投稿（毎朝08:00 JST）
 sudo systemctl enable --now tarot-mai-daily.timer
+# 6) 自動更新（origin/main を5分ごとに確認し、進んでいたら取り込んで再起動）
+sudo systemctl enable --now tarot-mai-update.timer
 ```
 
 数日 `home` で安定を見てから、`.env` の `MISSKEY_VISIBILITY=public` に変更して
@@ -95,12 +97,47 @@ sudo systemctl enable --now tarot-mai-daily.timer
 
 ---
 
+## 自動更新（origin/main → VM）
+
+`tarot-mai-update.timer` が **5分ごとに `origin/main` を確認**し、ローカルより進んでいたら
+`git reset --hard` で取り込み、依存とsystemdユニットを反映して `tarot-mai-bot` を再起動する
+（[`auto-update.sh`](auto-update.sh)）。更新が無ければ何もしない。プル型なので受信ポートも
+外部への鍵預けも不要。**`main` にマージした内容がそのまま本番へ反映される**ので、`main` は
+常にデプロイ可能な状態に保つこと（作業は `develop`／PR経由・AGENTS.md §7）。
+
+### すでに稼働中のVMで有効化する（初回だけ手動）
+
+自動更新の仕組み自体を main に載せる最初の一回は手で取り込む。
+
+```bash
+gcloud compute ssh fli-tarot-bot --project=fateline-investigators-service --zone=asia-northeast1-a
+# ↓ VM の中で（先に develop → main を PR でマージしておく）
+cd /opt/tarot-mai
+sudo git fetch origin main && sudo git reset --hard origin/main
+sudo cp bot/deploy/tarot-mai-update.service /etc/systemd/system/
+sudo cp bot/deploy/tarot-mai-update.timer   /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now tarot-mai-update.timer
+systemctl list-timers tarot-mai-update.timer     # 次回発火の確認
+journalctl -u tarot-mai-update -f                # 更新ログの確認
+```
+
+### 一時的に自動更新を止める / 手で更新する
+
+```bash
+sudo systemctl disable --now tarot-mai-update.timer     # 自動更新を止める
+sudo systemctl start tarot-mai-update.service           # いますぐ1回だけ更新チェック
+```
+
+---
+
 ## 運用メモ
 
-- **更新**: `develop → main` を PR でマージ → VM で `cd /opt/tarot-mai && sudo git pull` →
-  `sudo systemctl restart tarot-mai-bot`（正本はプロセス起動時に読むので再起動が必要）。
+- **更新**: `develop → main` を PR でマージするだけ。あとは `tarot-mai-update.timer` が
+  5分以内に取り込んで Bot を再起動する（上記「自動更新」）。急ぎで反映したいときは
+  `sudo systemctl start tarot-mai-update.service` を1回叩く。
 - **止める**: `sudo systemctl stop tarot-mai-bot`。定期投稿は `... stop tarot-mai-daily.timer`。
 - **状態ファイル**: `bot/state/state.json` は消さない（消すと過去メンションを再処理しうる）。
 - **コスト**: VMは `e2-small` の常時起動分＋Claude API 従量（1回 ≒ $0.03〜0.08、bot/README.md 参照）。
-  使わなくなったら `gcloud compute instances stop tarot-mai-bot` で課金を止められる。
+  使わなくなったら `gcloud compute instances stop fli-tarot-bot` で課金を止められる。
 - **鍵の失効**: トークン/キーを更新したら `.env` を差し替えて Bot を再起動する。

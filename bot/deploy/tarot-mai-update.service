@@ -1,0 +1,18 @@
+# 錦野舞のタロット執務室 — 自動更新（ワンショット）
+#
+# 単体では常駐しません。tarot-mai-update.timer から root で定期的に呼ばれます。
+#
+#   sudo cp bot/deploy/tarot-mai-update.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now tarot-mai-update.timer
+#   journalctl -u tarot-mai-update -f
+
+[Unit]
+Description=Tarot Mai auto-update from origin/main
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# git pull / pip / systemctl restart を行うため root で実行する（User= を付けない）
+ExecStart=/usr/bin/bash /opt/tarot-mai/bot/deploy/auto-update.sh

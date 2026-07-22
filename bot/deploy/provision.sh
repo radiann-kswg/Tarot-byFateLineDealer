@@ -62,9 +62,11 @@ chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}/bot/state" "${APP_DIR}/readings"
 # リポジトリ本体は root 所有（読み取りのみ）。書き込みは state / readings に限定。
 
 log "systemd ユニットを配置"
-install -m 0644 "${APP_DIR}/bot/deploy/tarot-mai-bot.service"   /etc/systemd/system/
-install -m 0644 "${APP_DIR}/bot/deploy/tarot-mai-daily.service" /etc/systemd/system/
-install -m 0644 "${APP_DIR}/bot/deploy/tarot-mai-daily.timer"   /etc/systemd/system/
+install -m 0644 "${APP_DIR}/bot/deploy/tarot-mai-bot.service"    /etc/systemd/system/
+install -m 0644 "${APP_DIR}/bot/deploy/tarot-mai-daily.service"  /etc/systemd/system/
+install -m 0644 "${APP_DIR}/bot/deploy/tarot-mai-daily.timer"    /etc/systemd/system/
+install -m 0644 "${APP_DIR}/bot/deploy/tarot-mai-update.service" /etc/systemd/system/
+install -m 0644 "${APP_DIR}/bot/deploy/tarot-mai-update.timer"   /etc/systemd/system/
 systemctl daemon-reload
 
 cat <<EOF
@@ -95,6 +97,10 @@ cat <<EOF
   6) 「今日の一枚」定期投稿を有効化（毎朝08:00 JST）
        sudo systemctl enable --now tarot-mai-daily.timer
        systemctl list-timers tarot-mai-daily.timer
+
+  7) 自動更新を有効化（origin/main を5分ごとに確認し、進んでいたら取り込んで再起動）
+       sudo systemctl enable --now tarot-mai-update.timer
+       journalctl -u tarot-mai-update -f
 
   公開範囲を広げるのは数日 home で安定を確認してから。.env の
   MISSKEY_VISIBILITY=public に変えて Bot を再起動してください（AGENTS.md §6.5）。
