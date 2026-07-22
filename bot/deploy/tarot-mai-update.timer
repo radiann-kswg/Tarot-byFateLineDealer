@@ -1,0 +1,16 @@
+# origin/main を定期的に確認し、更新があれば取り込む。
+#
+# 起動2分後から動き出し、以後5分ごとにチェック。更新が無ければ pull も再起動もしない
+# （auto-update.sh がリビジョンを比較して、進んでいるときだけ反映する）。
+
+[Unit]
+Description=Periodically check origin/main and auto-update the Tarot Mai bot
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30
+Unit=tarot-mai-update.service
+
+[Install]
+WantedBy=timers.target
