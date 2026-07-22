@@ -1,0 +1,19 @@
+# 「今日の一枚」を毎朝8時に投稿する。
+#
+# サーバのタイムゾーンに従います。別のタイムゾーンで動かすなら
+# OnCalendar に明示するか、`sudo timedatectl set-timezone Asia/Tokyo` を検討してください。
+#
+# bot.daily は同じ日に二度投稿しないよう state.json で見張っているので、
+# Persistent=true で電源断のあとに追いかけ実行されても二重投稿にはなりません。
+
+[Unit]
+Description=Post the daily one-card reading
+
+[Timer]
+OnCalendar=*-*-* 08:00:00
+Persistent=true
+RandomizedDelaySec=300
+Unit=tarot-mai-daily.service
+
+[Install]
+WantedBy=timers.target

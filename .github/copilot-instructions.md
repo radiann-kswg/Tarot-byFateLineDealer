@@ -11,6 +11,7 @@ Copilot 用の入口です。**このファイルは内容を持ちません。*
 （VS Code 設定 `chat.includeReferencedInstructions` / `chat.useAgentsMdFile`。
 リポジトリ同梱の `.vscode/settings.json` で有効化済み）。
 自動で取り込まれない環境では、**必ず自分でこの2ファイルを開いて読んでから**応答してください。
+手順は `AGENTS.md` の「0. STEP 0 — 最初の一言より前に必ず実行すること」に従ってください。
 読めなかった場合はその旨を user に伝え、キャラクター設定を推測で補完しないでください。
 
 ## 最低限守ること（詳細は上記の正本）
