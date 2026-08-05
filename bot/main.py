@@ -28,6 +28,9 @@ log = logging.getLogger("tarot-mai")
 # 相談文が空だったときに使う既定のテーマ（一言だけ引く）
 EMPTY_THEME = "今のあなたへのメッセージ"
 
+# 常駐中、相談が無いときに生存を書き残す間隔（秒）
+IDLE_LOG_INTERVAL = 3600
+
 
 def setup_logging() -> None:
     logging.basicConfig(
@@ -163,18 +166,30 @@ def handle_notification(config: Config, client: Misskey, state: state_mod.State,
     if live:
         state.mark_replied(notification_id)
         state.touch_user(user_id, config.user_cooldown)
+        # 1件返すたびに永続化する。バッチの最後まで待つと、途中でプロセスが落ちたときに
+        # 「投稿は済んでいるのに応答済みとして残っていない」通知ができてしまい、
+        # 再起動後に二度返信する（AGENTS.md §6.5）。SPOT VM のように予告なく
+        # 止められる環境では、この取りこぼしが現実に起こりうる。
+        state.save()
     return True
 
 
 def run_once(config: Config, client: Misskey, state: state_mod.State, live: bool,
-             limit: int, catch_up: bool) -> int:
-    """1回分のポーリング。処理した件数を返す。"""
+             limit: int, catch_up: bool, idle_notice: bool = True) -> int:
+    """1回分のポーリング。処理した件数を返す。
+
+    idle_notice を False にすると、通知が無かったときの案内を DEBUG に落とす
+    （常駐ループ用。共用VMの journald を埋めないため）。
+    """
     since_id = state.last_notification_id
     notifications = client.notifications(since_id, limit=limit, mark_as_read=live)
     if not notifications:
-        log.info("新しいメンション・リプライはありません（sinceId=%s）。"
-                 "Bot 宛にメンションしてから、もう一度試してください。", since_id or "なし")
-        log.info("読み解きだけ先に確かめたいときは: py -m bot.main --simulate \"相談文\"")
+        if idle_notice:
+            log.info("新しいメンション・リプライはありません（sinceId=%s）。"
+                     "Bot 宛にメンションしてから、もう一度試してください。", since_id or "なし")
+            log.info("読み解きだけ先に確かめたいときは: py -m bot.main --simulate \"相談文\"")
+        else:
+            log.debug("新しいメンション・リプライはありません（sinceId=%s）", since_id or "なし")
         return 0
 
     newest = notifications[-1]["id"]
@@ -218,9 +233,17 @@ def run_loop(config: Config, client: Misskey, state: state_mod.State, live: bool
              limit: int, catch_up: bool) -> None:
     log.info("メンションの監視を開始します（%d 秒ごと・%s）",
              config.poll_interval, "実投稿" if live else "dry-run")
+    last_idle_log: float | None = None
     while True:
         try:
-            run_once(config, client, state, live, limit, catch_up)
+            run_once(config, client, state, live, limit, catch_up, idle_notice=False)
+            # 何も無いときは IDLE_LOG_INTERVAL に1回だけ生存を書く。毎回書くと
+            # 1日5千行を超え、共用VMでは他のBotのログを journald から押し出す。
+            now = time.monotonic()
+            if last_idle_log is None or now - last_idle_log >= IDLE_LOG_INTERVAL:
+                log.info("待機中（%d 秒ごとに確認・sinceId=%s）",
+                         config.poll_interval, state.last_notification_id or "なし")
+                last_idle_log = now
         except MisskeyError as exc:
             log.error("通知の取得に失敗: %s", exc)
         except KeyboardInterrupt:
