@@ -147,6 +147,18 @@ class HandleNotificationTests(ReadingCaseMixin, unittest.TestCase):
         self.assertTrue(self.handle(notification("私も占って", "notif-2", user_id="user-2")))
         self.assertEqual(2, len(self.client.notes))
 
+    def test_reply_is_persisted_immediately(self):
+        """返信した時点で state.json に落ちていること。
+
+        バッチの最後まで書き込みを遅らせると、途中でプロセスが落ちたときに
+        投稿済みの通知へ再起動後もう一度返信してしまう（AGENTS.md §6.5）。
+        SPOT VM のように予告なく止まる環境では、この窓が現実に開く。
+        """
+        self.assertTrue(self.handle(notification("占って")))
+        reloaded = state_mod.State(self.config.state_path)
+        self.assertTrue(reloaded.already_replied("notif-1"),
+                        "返信したのに応答済みが永続化されていない")
+
     def test_dry_run_does_not_post_or_record(self):
         self.assertTrue(self.handle(notification("占って"), live=False))
         self.assertEqual([], self.client.notes)

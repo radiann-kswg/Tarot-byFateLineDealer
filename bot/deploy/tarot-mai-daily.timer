@@ -1,7 +1,10 @@
-# 「今日の一枚」を毎朝8時に投稿する。
+# 「今日の一枚」を毎朝8時（JST）に投稿する。
 #
-# サーバのタイムゾーンに従います。別のタイムゾーンで動かすなら
-# OnCalendar に明示するか、`sudo timedatectl set-timezone Asia/Tokyo` を検討してください。
+# ★タイムゾーンは OnCalendar に明示する。共用VMでは、同居している他のBotの都合で
+#   ホストの時計設定（timedatectl）が変わることがあり、サーバのTZ任せにすると
+#   投稿時刻が黙ってずれる。ここに書いておけばホストのTZに左右されない。
+#   （TZ 付きの OnCalendar は systemd v252 以降。Debian 12 は 252 なので使える。
+#    確認: systemd-analyze calendar "*-*-* 08:00:00 Asia/Tokyo"）
 #
 # bot.daily は同じ日に二度投稿しないよう state.json で見張っているので、
 # Persistent=true で電源断のあとに追いかけ実行されても二重投稿にはなりません。
@@ -10,9 +13,11 @@
 Description=Post the daily one-card reading
 
 [Timer]
-OnCalendar=*-*-* 08:00:00
+OnCalendar=*-*-* 08:00:00 Asia/Tokyo
 Persistent=true
 RandomizedDelaySec=300
+# 他のBotのタイマーと発火をまとめてよい（共用VMの起床回数を減らす）
+AccuracySec=1min
 Unit=tarot-mai-daily.service
 
 [Install]

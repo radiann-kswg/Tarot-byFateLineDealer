@@ -20,8 +20,28 @@ WorkingDirectory=/opt/tarot-mai
 EnvironmentFile=/opt/tarot-mai/.env
 ExecStart=/opt/tarot-mai/.venv/bin/python -m bot.daily --live
 
+# 共用VM向けの上限。常駐と同じ理由で、はみ出すならこちらが落ちる（tarot-mai-bot.service 参照）
+MemoryHigh=384M
+MemoryMax=640M
+TasksMax=64
+CPUWeight=50
+IOWeight=50
+Nice=5
+TimeoutStartSec=300
+SyslogIdentifier=tarot-mai-daily
+
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/opt/tarot-mai/bot/state /opt/tarot-mai/readings
+
+ProtectProc=invisible
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
