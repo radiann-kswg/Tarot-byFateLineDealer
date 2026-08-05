@@ -10,13 +10,16 @@
 # ★安全のため、このスクリプトは Bot を自動で --live 起動しない。
 #   .env を置いて `--check` が通ることを確認してから、最後に表示される手順で
 #   段階的に公開してください（AGENTS.md §6.5 / bot/README.md「ロールアウト」）。
+#
+# ★このスクリプトは**他のBotと共用しているVM**でも流せるように書いてあります。
+#   ホスト全体に及ぶ変更（タイムゾーン・apt キャッシュの削除）は行わず、
+#   触るのは ${APP_DIR} と tarot-mai-* のユニット、専用ユーザー tarot だけです。
 set -euo pipefail
 
 REPO_URL="https://github.com/radiann-kswg/Tarot-byFateLineDealer.git"
 BRANCH="main"                 # 本番は origin/main（AGENTS.md §7）。develop を直接置かない。
 APP_DIR="/opt/tarot-mai"
 APP_USER="tarot"
-TZ_NAME="Asia/Tokyo"
 
 log() { printf '\033[36m[provision]\033[0m %s\n' "$*"; }
 
@@ -25,15 +28,30 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-log "タイムゾーンを ${TZ_NAME} に設定（定期投稿の 08:00 をJSTに合わせる）"
-timedatectl set-timezone "${TZ_NAME}" || true
+# ★タイムゾーンはホスト全体の設定なので、共用VMでは触らない。
+#   「今日の一枚」の 08:00 は tarot-mai-daily.timer の OnCalendar に Asia/Tokyo を
+#   明示してあるので、ホストのTZが何であっても JST で発火する。
+log "ホストのタイムゾーンは変更しません（現在: $(timedatectl show -p Timezone --value 2>/dev/null || echo 不明)）"
 
-log "必要パッケージを導入（python3-venv / pip / git / 日本語フォント）"
+log "必要パッケージを確認（不足しているものだけ導入する）"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get install -y --no-install-recommends \
-  python3 python3-venv python3-pip git ca-certificates fonts-noto-cjk
-rm -rf /var/lib/apt/lists/*
+packages=(python3 python3-venv python3-pip git ca-certificates fonts-noto-cjk)
+missing=()
+for pkg in "${packages[@]}"; do
+  if ! dpkg-query -W -f='${Status}' "${pkg}" 2>/dev/null | grep -q "ok installed"; then
+    missing+=("${pkg}")
+  fi
+done
+if ((${#missing[@]})); then
+  log "不足しているパッケージ: ${missing[*]}"
+  # unattended-upgrades / apt-daily.timer と dpkg のロックを取り合うので、待てるようにする
+  apt-get -o DPkg::Lock::Timeout=600 update -y
+  apt-get -o DPkg::Lock::Timeout=600 install -y --no-install-recommends "${missing[@]}"
+else
+  log "必要なパッケージは導入済み。apt には触れません"
+fi
+# ★ /var/lib/apt/lists は同居している他のBotの環境構築でも使う共有のキャッシュなので消さない
+#   （専用VM前提だった頃はここで rm していた）。
 
 log "実行専用ユーザー ${APP_USER} を用意（ログイン不可・最小権限）"
 if ! id -u "${APP_USER}" >/dev/null 2>&1; then

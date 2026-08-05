@@ -16,3 +16,13 @@ Wants=network-online.target
 Type=oneshot
 # git pull / pip / systemctl restart を行うため root で実行する（User= を付けない）
 ExecStart=/usr/bin/bash /opt/tarot-mai/bot/deploy/auto-update.sh
+
+# 共用VM向け。pip の依存解決は一時的にメモリと I/O を食うので、
+# 更新のたびに同居のBotが詰まらないよう、優先度を下げて上限を課す。
+MemoryMax=1G
+TasksMax=128
+CPUWeight=20
+IOWeight=20
+Nice=10
+TimeoutStartSec=900
+SyslogIdentifier=tarot-mai-update

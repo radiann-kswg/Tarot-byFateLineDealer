@@ -6,6 +6,10 @@
 #   sudo journalctl -u tarot-mai-bot -f
 #
 # 配置先とユーザー名は環境に合わせて書き換えてください。
+#
+# ★このユニットは**VMを他のBotと共有している**前提で書いています。
+#   資源の上限を自分に課しておくことで、暴走したときに巻き添えで落ちるのが
+#   同居している他のBotではなく、この Bot 自身になるようにしています。
 
 [Unit]
 Description=Tarot Mai Misskey Bot (mention replies)
@@ -27,12 +31,44 @@ ExecStart=/opt/tarot-mai/.venv/bin/python -m bot.main --live
 Restart=always
 RestartSec=15
 
+# 停止指示には手早く従う（SPOT VM の停止通告は待ってくれない）
+TimeoutStopSec=20
+
+# --- 同居のための資源上限 ---------------------------------------------------
+# 実測の常駐時フットプリントは約 70MB。陣形画像の合成で一時的に膨らむぶんを
+# 見込んでも 384MB を超えることはまず無いので、そこを緩い上限（MemoryHigh）に、
+# 640MB を硬い上限（MemoryMax）にする。ここを越えたら他のBotではなく
+# この Bot が OOM で落ち、Restart=always で戻ってくる。
+MemoryHigh=384M
+MemoryMax=640M
+TasksMax=64
+
+# 占いは数十秒待たされても困らない。CPU と I/O は同居のBotに譲る。
+CPUWeight=50
+IOWeight=50
+Nice=5
+
+# ログの出どころを名前で分ける（journalctl -t tarot-mai-bot）
+SyslogIdentifier=tarot-mai-bot
+
 # 最小権限で動かす
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/opt/tarot-mai/bot/state /opt/tarot-mai/readings
+
+# 同居している他のBotのプロセスと環境変数（＝トークン）を覗けないようにする
+ProtectProc=invisible
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+# 名前解決に AF_NETLINK が要る（getaddrinfo）ので、ここは削らないこと
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target

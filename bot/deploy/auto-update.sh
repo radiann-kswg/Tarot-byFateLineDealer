@@ -19,12 +19,16 @@ log() { printf '%s [auto-update] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 exec 9>"${LOCK}"
 flock -n 9 || { log "別の更新が実行中のためスキップ"; exit 0; }
 
-git config --global --add safe.directory "${APP_DIR}" 2>/dev/null || true
+# 共用VMでは root の ~/.gitconfig を他のBotの更新スクリプトと共有しているので、
+# `git config --global` で共有の設定を書き換えない。safe.directory は
+# このスクリプトの git 呼び出しにだけ与える。
+git_() { git -c safe.directory="${APP_DIR}" -C "${APP_DIR}" "$@"; }
+
 cd "${APP_DIR}"
 
-git fetch --quiet origin "${BRANCH}"
-local_rev="$(git rev-parse HEAD)"
-remote_rev="$(git rev-parse "origin/${BRANCH}")"
+git_ fetch --quiet origin "${BRANCH}"
+local_rev="$(git_ rev-parse HEAD)"
+remote_rev="$(git_ rev-parse "origin/${BRANCH}")"
 
 if [[ "${local_rev}" == "${remote_rev}" ]]; then
   log "更新なし（${local_rev:0:7}）"
@@ -32,7 +36,7 @@ if [[ "${local_rev}" == "${remote_rev}" ]]; then
 fi
 
 log "更新を検出: ${local_rev:0:7} -> ${remote_rev:0:7}"
-git reset --hard "origin/${BRANCH}"          # ローカル変更は破棄。state/readings は gitignore なので残る
+git_ reset --hard "origin/${BRANCH}"         # ローカル変更は破棄。state/readings は gitignore なので残る
 
 # 依存を取り込む（変化が無ければ短時間で終わる）
 "${APP_DIR}/.venv/bin/pip" install --quiet --upgrade pip

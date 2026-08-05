@@ -9,7 +9,10 @@ Description=Periodically check origin/main and auto-update the Tarot Mai bot
 [Timer]
 OnBootSec=2min
 OnUnitActiveSec=5min
-RandomizedDelaySec=30
+# 同居している他のBotの更新タイマーと発火が重なると、2 vCPU の共用VMでは
+# git fetch が団子になる。ばらけさせたうえで、起床はまとめてよいことにする。
+RandomizedDelaySec=90
+AccuracySec=1min
 Unit=tarot-mai-update.service
 
 [Install]

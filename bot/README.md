@@ -230,13 +230,20 @@ systemd ユニットは [`deploy/`](deploy/) に置いてあります。
 sudo cp bot/deploy/tarot-mai-bot.service /etc/systemd/system/
 sudo cp bot/deploy/tarot-mai-daily.service /etc/systemd/system/
 sudo cp bot/deploy/tarot-mai-daily.timer /etc/systemd/system/
+sudo cp bot/deploy/tarot-mai-update.service /etc/systemd/system/
+sudo cp bot/deploy/tarot-mai-update.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now tarot-mai-bot
 sudo systemctl enable --now tarot-mai-daily.timer
+sudo systemctl enable --now tarot-mai-update.timer
 sudo journalctl -u tarot-mai-bot -f
 ```
 
 配置先（`/opt/tarot-mai`）と実行ユーザー（`tarot`）は環境に合わせて書き換えてください。
+
+> **GCE の共用VMへ載せる場合**は、上記を手で流さずに
+> [`deploy/GCE-deploy.md`](deploy/GCE-deploy.md) の手順に従ってください。
+> 他のBotと同居するため、ホスト全体に触らない配慮と切り替えの順番が要ります。
 
 ### C. Docker
 
