@@ -1,7 +1,7 @@
 # GCE 本番デプロイ手順書（錦野舞のタロット Bot）
 
-対象: Google Compute Engine の常時起動 VM で、メンション応答の常駐＋「今日の一枚」定期投稿を動かす。
-方針: **GCE 一本化**（Cloudflare はこの常駐デーモンの置き場所にはならないため使わない）。
+対象: Google Compute Engine の VM で、メンション応答の常駐＋「今日の一枚」定期投稿を動かす。
+方針: **Misskey Bot 群の共用VM `misskey-bots-unified` に間借りする**（GCP のコスト削減で集約された）。
 秘密情報: **ローカルの `.env` を `scp` でVMへ転送**する（中身は誰にも見せず、コミットもしない）。
 
 構成のポイント: この Bot は Misskey へ**自分から取りに行く**（アウトバウンド）だけで、外から接続を受けない。
@@ -9,91 +9,184 @@
 
 ---
 
-## 前提（先に済ませること）
+## 配置先
 
-1. **`origin/main` に最新を反映**しておく。この手順書と `provision.sh`、実運用の修正は
-   作業ブランチ／`develop` にあるので、**PR で `develop → main` をマージ**してからデプロイする
-   （`main` へ直接 push しない・AGENTS.md §7.2）。`provision.sh` は `main` から clone するため、
-   これが済んでいないとVM側に存在しない。
-2. **GCP プロジェクトID**を用意（VM作成に必須）。
-3. ローカルの `gcloud` CLI にログイン（VMへの `scp`/`ssh` に使う）。
-   ```bash
-   gcloud auth login
-   gcloud config set project fateline-investigators-service
-   ```
+| | VM | プロジェクト / ゾーン | 備考 |
+| --- | --- | --- | --- |
+| **移設先** | `misskey-bots-unified` | `numbertales-misskey-surver` / `us-central1-a` | e2-medium・**SPOT**・Bot 群の共用 |
+| 移設元（旧） | `fli-tarot-bot` | `fateline-investigators-service` / `asia-northeast1-a` | e2-small・このBot専用。移設後は停止する |
+
+共用VMに同居しているもの（2026-08-05 時点）:
+
+- サービス: `aphrnts-100-bot` / `ai_bot` / `pm2-snine9801`
+- タイマー: `aphrnts-100-deploy` / `aphrnts-100-watchdog` / `numbertales-watchdog`
+
+`tarot-mai-*` という名前はどれとも衝突しない。
 
 ---
 
-## STEP 1. VM を作成（担当: 舞 / GCEコネクタ）
+## 共用VMで守ること
 
-| 項目 | 値 |
-| --- | --- |
-| 名前 | `fli-tarot-bot` |
-| ゾーン | `asia-northeast1-a`（東京） |
-| マシンタイプ | `e2-small` |
-| イメージ | `debian-12`（`debian-cloud`） |
+**ホスト全体に及ぶものを変えない。** 同居しているBotが巻き添えになる。
 
-同等の gcloud コマンド（手動で作る場合の参考）:
+- タイムゾーン（`timedatectl`）を変えない。
+  「今日の一枚」の 08:00 は `tarot-mai-daily.timer` の `OnCalendar` に `Asia/Tokyo` を明示してあるので、
+  ホストのTZが何であっても JST で発火する。
+- `/var/lib/apt/lists` を消さない（共有の apt キャッシュ）。パッケージは不足分だけ入れる。
+- root の `~/.gitconfig` を書き換えない（他のBotの更新スクリプトと共有している）。
 
-```bash
-gcloud compute instances create fli-tarot-bot \
-  --project=fateline-investigators-service --zone=asia-northeast1-a \
-  --machine-type=e2-small --image-family=debian-12 --image-project=debian-cloud
-```
+この3つは [`provision.sh`](provision.sh) と [`auto-update.sh`](auto-update.sh) が守るように書いてある。
+**触ってよいのは `/opt/tarot-mai`・`tarot-mai-*` のユニット・専用ユーザー `tarot` だけ。**
 
-## STEP 2. 秘密情報 `.env` を転送（担当: あなた）
+資源の食い合いは systemd 側で自分に上限を課して防いでいる（[`tarot-mai-bot.service`](tarot-mai-bot.service)）。
+はみ出したときに落ちるのは同居のBotではなくこの Bot 自身で、`Restart=always` で戻ってくる。
 
-ローカルのリポジトリ直下 or `bot/.env` にある本番用 `.env` を、VMのホームへ送る。
+## SPOT VM であること
 
-```bash
-# ローカルの .env を VM の ~/.env へ（中身は表示されない）
-gcloud compute scp bot/.env fli-tarot-bot:~/.env \
-  --project=fateline-investigators-service --zone=asia-northeast1-a
-```
+共用VMは Spot（`instanceTerminationAction=STOP`）。**preemption で停止したあと、自分では戻ってこない。**
+Spot VM に `automaticRestart=true` は設定できない（GCP の仕様）。復帰の手当ては下の「運用メモ」を参照。
 
-> `MISSKEY_VISIBILITY=home` のまま送ること（最初は控えめに公開）。安定確認後に `public` へ。
+Bot 側は止められる前提で書いてある。
 
-## STEP 3. プロビジョニング（担当: あなた / VM内で1回）
+- 返信するたびに `state.json` を書くので、途中で止められても同じメンションに二度返信しない（AGENTS.md §6.5）。
+- `tarot-mai-daily.timer` は `Persistent=true` なので、停止中に 08:00 を跨いでも復帰後に追いかけて投稿する。
+  `bot.daily` が同じ日の二度目を弾く。
 
-VM に入り、`main` から取得したスクリプトで環境を一括構築する（apt・venv・clone・systemd配置）。
+---
+
+## 移設の手順
+
+### STEP 0. 前提
+
+1. **`origin/main` に最新を反映**しておく。`provision.sh` は `main` から clone するので、
+   共用VM対応が `main` に載っていないと、専用VM前提の古いスクリプトが走る。
+   `develop → main` は PR でマージすること（`main` へ直接 push しない・AGENTS.md §7.2）。
+2. ローカルの `gcloud` CLI にログイン。
+
+   ```bash
+   gcloud auth login
+   ```
+
+### STEP 1. プロビジョニング（共用VM内で1回）
+
+`main` から取得したスクリプトで環境を一括構築する（不足パッケージ・venv・clone・systemd配置）。
 **このスクリプトは Bot を自動起動しない**ので、この時点では何も投稿されない。
+旧VMはまだ動かしたままでよい。
 
 ```bash
-gcloud compute ssh fli-tarot-bot --project=fateline-investigators-service --zone=asia-northeast1-a
+gcloud compute ssh misskey-bots-unified \
+  --project=numbertales-misskey-surver --zone=us-central1-a
 
 # ↓ VM の中で
 curl -fsSL https://raw.githubusercontent.com/radiann-kswg/Tarot-byFateLineDealer/main/bot/deploy/provision.sh \
   | sudo bash
+```
 
-# 転送した .env を所定の場所へ移し、権限を締める
+### STEP 2. 秘密情報 `.env` を転送
+
+ローカルのリポジトリ直下 or `bot/.env` にある本番用 `.env` を、VMのホームへ送ってから所定の場所へ移す。
+
+```bash
+gcloud compute scp bot/.env misskey-bots-unified:~/.env \
+  --project=numbertales-misskey-surver --zone=us-central1-a
+
+# ↓ VM の中で
 sudo mv ~/.env /opt/tarot-mai/.env
 sudo chown tarot:tarot /opt/tarot-mai/.env
 sudo chmod 600 /opt/tarot-mai/.env
 ```
 
-## STEP 4. 段階リリース（担当: あなた / provision の最後にも表示される）
+> 旧VMと同じトークンを使う。`MISSKEY_VISIBILITY` は旧VMの値をそのまま持ち込むこと
+> （移設で公開範囲を同時に変えない。変えるなら安定を確認してから別途）。
 
-投稿は公開・不可逆。いきなり常駐にせず、順番に確かめる（bot/README.md「ロールアウト」）。
+### STEP 3. 投稿せずに確かめる
+
+ここまでは旧VMが本番を担当したままでよい。以下は**実投稿しない**。
 
 ```bash
 cd /opt/tarot-mai
-# 1) 疎通確認（投稿もAPI課金もしない）。isBot と権限4つを確認
+# 疎通確認（投稿もAPI課金もしない）。isBot と権限4つを確認
 sudo -u tarot .venv/bin/python -m bot.main --check
-# 2) 読み解きだけ試す（Misskey非接続・Claudeは課金あり）
+# 読み解きだけ試す（Misskey非接続・Claudeは課金あり）
 sudo -u tarot .venv/bin/python -m bot.main --simulate "今日の私へ"
-# 3) 別アカウントからBot宛にメンション → 1件だけ home 公開で実投稿
-sudo -u tarot .venv/bin/python -m bot.main --once --live
-# 4) 問題なければ常駐開始
-sudo systemctl enable --now tarot-mai-bot
-sudo journalctl -u tarot-mai-bot -f
-# 5) 「今日の一枚」定期投稿（毎朝08:00 JST）
-sudo systemctl enable --now tarot-mai-daily.timer
-# 6) 自動更新（origin/main を5分ごとに確認し、進んでいたら取り込んで再起動）
-sudo systemctl enable --now tarot-mai-update.timer
 ```
 
-数日 `home` で安定を見てから、`.env` の `MISSKEY_VISIBILITY=public` に変更して
-`sudo systemctl restart tarot-mai-bot`。
+`--simulate` は陣形画像の生成まで通るので、**日本語フォントが入っているかもここで分かる**。
+
+### STEP 4. 切り替え（★順番を守る）
+
+**新旧の両方が動いている時間を作らないこと。** 同じトークンで同じ通知を拾うので、
+二重に返信してしまう（AGENTS.md §6.5）。**必ず旧を止めてから新を上げる。**
+
+**4-1. 旧VMを止める**
+
+```bash
+gcloud compute ssh fli-tarot-bot \
+  --project=fateline-investigators-service --zone=asia-northeast1-a
+
+# ↓ 旧VM の中で
+sudo systemctl disable --now tarot-mai-update.timer   # 先に自動更新を止める
+sudo systemctl disable --now tarot-mai-daily.timer
+sudo systemctl disable --now tarot-mai-bot
+systemctl is-active tarot-mai-bot                     # inactive になったことを確認
+```
+
+**4-2. 状態ファイルを引き継ぐ**
+
+`state.json` には応答済み通知ID・クールダウン・「今日の一枚」の投稿日が入っている（秘密情報は無い）。
+引き継がなくても初回起動のバックログ抑止が効くので二重返信はしないが、
+クールダウンと当日の投稿済み記録を保つために移すのが安全。
+
+```bash
+# ↓ 旧VM の中で（tarot 所有・600 なので、読める形にしてから出す）
+sudo cp /opt/tarot-mai/bot/state/state.json /tmp/state.json
+sudo chown "$(whoami)" /tmp/state.json
+
+# ↓ ローカルで（旧VM → 手元 → 共用VM）
+gcloud compute scp fli-tarot-bot:/tmp/state.json ./state.json \
+  --project=fateline-investigators-service --zone=asia-northeast1-a
+gcloud compute scp ./state.json misskey-bots-unified:~/state.json \
+  --project=numbertales-misskey-surver --zone=us-central1-a
+
+# ↓ 共用VM の中で
+sudo install -o tarot -g tarot -m 600 ~/state.json /opt/tarot-mai/bot/state/state.json
+rm ~/state.json
+```
+
+**4-3. 共用VMで1件だけ実投稿して確かめる**
+
+別アカウントからBot宛にメンションを送ってから:
+
+```bash
+cd /opt/tarot-mai
+sudo -u tarot .venv/bin/python -m bot.main --once --live
+```
+
+**4-4. 常駐と定期投稿を開始**
+
+```bash
+sudo systemctl enable --now tarot-mai-bot
+sudo journalctl -u tarot-mai-bot -f          # または journalctl -t tarot-mai-bot -f
+sudo systemctl enable --now tarot-mai-daily.timer
+sudo systemctl enable --now tarot-mai-update.timer
+systemctl list-timers "tarot-mai-*"
+```
+
+### STEP 5. 旧VMを片づける
+
+数日おいて共用VM側が安定したら、旧VMを止めて課金を切る。
+
+```bash
+gcloud compute instances stop fli-tarot-bot \
+  --project=fateline-investigators-service --zone=asia-northeast1-a
+```
+
+停止だけならディスク代は残る。戻す予定が無くなったら削除する（**削除は取り消せない**）。
+
+```bash
+gcloud compute instances delete fli-tarot-bot \
+  --project=fateline-investigators-service --zone=asia-northeast1-a
+```
 
 ---
 
@@ -104,23 +197,6 @@ sudo systemctl enable --now tarot-mai-update.timer
 （[`auto-update.sh`](auto-update.sh)）。更新が無ければ何もしない。プル型なので受信ポートも
 外部への鍵預けも不要。**`main` にマージした内容がそのまま本番へ反映される**ので、`main` は
 常にデプロイ可能な状態に保つこと（作業は `develop`／PR経由・AGENTS.md §7）。
-
-### すでに稼働中のVMで有効化する（初回だけ手動）
-
-自動更新の仕組み自体を main に載せる最初の一回は手で取り込む。
-
-```bash
-gcloud compute ssh fli-tarot-bot --project=fateline-investigators-service --zone=asia-northeast1-a
-# ↓ VM の中で（先に develop → main を PR でマージしておく）
-cd /opt/tarot-mai
-sudo git fetch origin main && sudo git reset --hard origin/main
-sudo cp bot/deploy/tarot-mai-update.service /etc/systemd/system/
-sudo cp bot/deploy/tarot-mai-update.timer   /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now tarot-mai-update.timer
-systemctl list-timers tarot-mai-update.timer     # 次回発火の確認
-journalctl -u tarot-mai-update -f                # 更新ログの確認
-```
 
 ### 一時的に自動更新を止める / 手で更新する
 
@@ -134,10 +210,24 @@ sudo systemctl start tarot-mai-update.service           # いますぐ1回だけ
 ## 運用メモ
 
 - **更新**: `develop → main` を PR でマージするだけ。あとは `tarot-mai-update.timer` が
-  5分以内に取り込んで Bot を再起動する（上記「自動更新」）。急ぎで反映したいときは
+  5分以内に取り込んで Bot を再起動する。急ぎで反映したいときは
   `sudo systemctl start tarot-mai-update.service` を1回叩く。
 - **止める**: `sudo systemctl stop tarot-mai-bot`。定期投稿は `... stop tarot-mai-daily.timer`。
+- **ログ**: 同居しているBotと journald を共有している。`journalctl -t tarot-mai-bot` /
+  `-t tarot-mai-daily` / `-t tarot-mai-update` で自分の分だけ見られる。
+  常駐中は相談が無ければ1時間に1行しか書かない（他のBotのログを押し出さないため）。
 - **状態ファイル**: `bot/state/state.json` は消さない（消すと過去メンションを再処理しうる）。
-- **コスト**: VMは `e2-small` の常時起動分＋Claude API 従量（1回 ≒ $0.03〜0.08、bot/README.md 参照）。
-  使わなくなったら `gcloud compute instances stop fli-tarot-bot` で課金を止められる。
+- **preemption からの復帰**: Spot VM は停止したまま戻らず、`automaticRestart` も設定できない。
+  手で戻すなら次の1行。VM が起動すれば `enable` 済みのユニットは自動で立ち上がる。
+
+  ```bash
+  gcloud compute instances start misskey-bots-unified \
+    --project=numbertales-misskey-surver --zone=us-central1-a
+  ```
+
+  自動化するなら、**VMの設定ではなく外から起こす**のが素直（Cloud Scheduler から
+  `compute.instances.start` を定期的に叩くなど）。同居しているBotにも同じだけ効く。
+  常時稼働が要るなら Spot をやめて標準（オンデマンド）に戻す判断になるが、
+  費用は数倍になる。**どちらも共用VM全体の方針なので、この Bot だけで決めない。**
+- **コスト**: 共用VMの持ち分＋Claude API 従量（1回 ≒ $0.03〜0.08、bot/README.md 参照）。
 - **鍵の失効**: トークン/キーを更新したら `.env` を差し替えて Bot を再起動する。
