@@ -87,14 +87,14 @@ install -m 0644 "${APP_DIR}/bot/deploy/tarot-mai-update.service" /etc/systemd/sy
 install -m 0644 "${APP_DIR}/bot/deploy/tarot-mai-update.timer"   /etc/systemd/system/
 systemctl daemon-reload
 
+log "環境の準備が完了しました。"
+# 以下は案内文。log() と違い色は付けない（ヒアドキュメントでは \033 がそのまま文字として出るため）
 cat <<EOF
-
-\033[32m[provision] 環境の準備が完了しました。\033[0m
 
 次にやること（順番どおりに）:
 
   1) 秘密情報を置く（このスクリプトは .env を作りません）
-       ローカルから scp 済みなら:  sudo mv ~/\.env ${APP_DIR}/.env
+       ローカルから scp 済みなら:  sudo mv ~/.env ${APP_DIR}/.env
        所有者と権限を締める:        sudo chown ${APP_USER}:${APP_USER} ${APP_DIR}/.env && sudo chmod 600 ${APP_DIR}/.env
 
   2) 疎通確認（投稿もAPI課金もしない）

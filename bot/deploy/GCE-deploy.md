@@ -52,6 +52,29 @@ Bot 側は止められる前提で書いてある。
 - `tarot-mai-daily.timer` は `Persistent=true` なので、停止中に 08:00 を跨いでも復帰後に追いかけて投稿する。
   `bot.daily` が同じ日の二度目を弾く。
 
+### 自動で起こす仕組み（VMの外・全Bot共通）
+
+VM側では復帰できないので、**外から定期的に起こす**。共用VM全体に効くもので、
+このリポジトリの管理外（GCP 側の設定）にあることに注意。
+
+| 仕掛け | 中身 |
+| --- | --- |
+| `misskey-bots-unified-autostart`（Cloud Scheduler） | 5分ごとに `compute.instances.start` を POST する。**稼働中に撃っても no-op**（数十ミリ秒で完了し、再起動はしない）ので、状態を判定せず無条件に投げている |
+| `numbertales-vm-watchdog`（Cloud Scheduler → Cloud Run） | 先行して存在する見張り。`numbertales-gce-watchdog` が同じVMを対象にしている。**2026-08-05 の preemption では停止から約2分のあいだに `start` を発行しなかった**ため、動作を当てにせず上の無条件起動を重ねている |
+
+Scheduler が使うサービスアカウント `bots-vm-autostart@…` には、
+**このVM1台のリソースにだけ** `roles/compute.instanceAdmin.v1` を付けてある（プロジェクト全体には広げない）。
+
+VM が起動すれば、`enable` 済みの `tarot-mai-*` は自動で立ち上がる。手で起こすなら:
+
+```bash
+gcloud compute instances start misskey-bots-unified \
+  --project=numbertales-misskey-surver --zone=us-central1-a
+```
+
+常時稼働がどうしても要るなら Spot をやめて標準（オンデマンド）に戻す判断になるが、費用は数倍になる。
+**共用VM全体の方針なので、この Bot だけで決めない。**
+
 ---
 
 ## 移設の手順
@@ -217,17 +240,8 @@ sudo systemctl start tarot-mai-update.service           # いますぐ1回だけ
   `-t tarot-mai-daily` / `-t tarot-mai-update` で自分の分だけ見られる。
   常駐中は相談が無ければ1時間に1行しか書かない（他のBotのログを押し出さないため）。
 - **状態ファイル**: `bot/state/state.json` は消さない（消すと過去メンションを再処理しうる）。
-- **preemption からの復帰**: Spot VM は停止したまま戻らず、`automaticRestart` も設定できない。
-  手で戻すなら次の1行。VM が起動すれば `enable` 済みのユニットは自動で立ち上がる。
-
-  ```bash
-  gcloud compute instances start misskey-bots-unified \
-    --project=numbertales-misskey-surver --zone=us-central1-a
-  ```
-
-  自動化するなら、**VMの設定ではなく外から起こす**のが素直（Cloud Scheduler から
-  `compute.instances.start` を定期的に叩くなど）。同居しているBotにも同じだけ効く。
-  常時稼働が要るなら Spot をやめて標準（オンデマンド）に戻す判断になるが、
-  費用は数倍になる。**どちらも共用VM全体の方針なので、この Bot だけで決めない。**
+- **preemption からの復帰**: 上の「自動で起こす仕組み」を参照。応答が途絶えたら、
+  まず `gcloud compute instances describe misskey-bots-unified --format="value(status)"` で
+  VMが `TERMINATED` になっていないかを見る（Bot の不具合ではなく preemption のことがある）。
 - **コスト**: 共用VMの持ち分＋Claude API 従量（1回 ≒ $0.03〜0.08、bot/README.md 参照）。
 - **鍵の失効**: トークン/キーを更新したら `.env` を差し替えて Bot を再起動する。
