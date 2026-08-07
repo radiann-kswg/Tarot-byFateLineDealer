@@ -80,6 +80,26 @@ class RenderSpreadTests(unittest.TestCase):
         self.assertEqual({1, 2}, set(positions))
         self.assertNotEqual(positions[1][0], positions[2][0])   # 横に並ぶ
 
+    def test_line_layout_places_every_card(self):
+        """相談者が持ち込んだ任意枚数を「並び」で合成できること（AGENTS.md §6.6）。"""
+        for count in (1, 4, 5, 6, 12):
+            positions = render_spread.layout("line", count=count)
+            self.assertEqual(set(range(1, count + 1)), set(positions), count)
+            self.assertTrue(all(rot == 0 for _, _, rot in positions.values()), count)
+
+    def test_line_layout_wraps_and_centres_rows(self):
+        per_row = render_spread.LINE_MAX_PER_ROW
+        positions = render_spread.layout("line", count=per_row + 1)
+        rows = {y for _, y, _ in positions.values()}
+        self.assertEqual(2, len(rows), "折り返して2行になること")
+        # 最終行が1枚なら、その行の中で中央（x=0）に来る
+        last = positions[per_row + 1]
+        self.assertAlmostEqual(0.0, last[0])
+
+    def test_line_layout_needs_a_count(self):
+        with self.assertRaises(ValueError):
+            render_spread.layout("line")
+
     def test_rejects_incomplete_position_data(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             with self.assertRaises(ValueError):

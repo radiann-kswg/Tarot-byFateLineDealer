@@ -113,6 +113,15 @@ Rider–Waite–Smith タロット カスタム絵文字セット（156個）
 """
 
 
+def emoji_name(card, reversed_=False):
+    """カード名 → Misskey の絵文字名。**この規則の正本はこの関数。**
+
+    Bot 側（`bot/emoji.py`）はこの関数を import して使う。規則を二重に持たないこと。
+    """
+    base = Path(shuffle.image_path(card)).stem      # 例: m00 / w01
+    return NAME_PREFIX + base + (REVERSED_SUFFIX if reversed_ else "")
+
+
 def english_name(card):
     """shuffle.py のカード名（日本語）に対応する英語カード名を返す。"""
     if card in shuffle.MAJOR:
@@ -130,10 +139,9 @@ def build_entries(palette=0):
     entries = []
     sources = {}
     for card in shuffle.build_deck():
-        base = Path(shuffle.image_path(card)).stem  # 例: m00 / w01
         en = english_name(card)
         for reversed_ in (False, True):
-            name = NAME_PREFIX + base + (REVERSED_SUFFIX if reversed_ else "")
+            name = emoji_name(card, reversed_)
             file_name = f"{name}.png"
             orient = "逆位置" if reversed_ else "正位置"
             aliases = list(dict.fromkeys([

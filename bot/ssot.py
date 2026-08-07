@@ -29,7 +29,11 @@ SYSTEM_SOURCES: tuple[tuple[str, str], ...] = (
 )
 
 DECK_FILE = "data/tarot-deck.md"
+IMAGERY_FILE = "data/card-imagery.md"
 RULES_FILE = "AGENTS.md"
+
+# data/card-imagery.md の「### 愚者 (The Fool)」形式の見出し
+_IMAGERY_HEADING = re.compile(r"^###\s+(?P<name>.+?)\s+\(.+\)\s*$")
 
 # AGENTS.md §6.3 の定型文を拾うための見出し。`#### テンプレート：<id>` の直後の
 # フェンス付きコードブロックが本文。
@@ -43,7 +47,8 @@ _OUTPUT_CONTRACT = """\
 
 - 前置き・後書き・見出し記法・コードブロック・箇条書き記号での装飾を付けない。地の文で紡ぐこと。
 - 陣形画像は Bot が別途添付します。本文にカード画像のURLやファイル名を書かない。
-- カードはすでに抽選済みです。引き直したり、渡されていないカードに言及したりしない。
+- カードはすでに確定しています（あなたが引いた場合も、相談者が引いて持ち込んだ場合も）。
+  引き直したり、渡されていないカードに言及したりしない。どちらが引いたのかは可変部に書いてあります。
 - 相談者への呼びかけにメンション記法（@名前）を使わない。返信先は Bot が設定します。
 """
 
@@ -178,3 +183,60 @@ def deck_entries(cards: list[dict]) -> str:
             f"   → 今回適用するのは「{applied}」の方"
         )
     return "\n".join(lines)
+
+
+@lru_cache(maxsize=1)
+def imagery_index() -> dict[str, str]:
+    """data/card-imagery.md を「カード名 -> 図像資料の本文」に畳む。
+
+    見出し `### 愚者 (The Fool)` から次の見出しまでを、そのカードの資料とみなす。
+    """
+    index: dict[str, str] = {}
+    name: str | None = None
+    body: list[str] = []
+    for line in _read(IMAGERY_FILE).splitlines():
+        heading = _IMAGERY_HEADING.match(line)
+        if heading:
+            if name:
+                index[name] = "\n".join(body).strip()
+            name = heading.group("name").strip()
+            body = []
+            continue
+        if line.startswith("## "):      # 章の切れ目でいったん閉じる
+            if name:
+                index[name] = "\n".join(body).strip()
+            name = None
+            body = []
+            continue
+        if name is not None:
+            body.append(line)
+    if name:
+        index[name] = "\n".join(body).strip()
+
+    index = {k: v for k, v in index.items() if v}
+    if not index:
+        raise SsotError(f"{IMAGERY_FILE} からカードの図像資料を読み取れませんでした")
+    return index
+
+
+def imagery_entries(cards: list[dict]) -> str:
+    """取り上げるカードの図像資料だけを抜き出す。
+
+    デッキ全体をプロンプトへ載せない理由は deck_entries() と同じ。
+    資料が無いカードは黙って飛ばさず、その旨を明記して渡す
+    （舞に「Waite はそこまで書いていない」と正直に言わせるため・AGENTS.md §6.6）。
+    """
+    index = imagery_index()
+    lines: list[str] = []
+    for card in cards:
+        name = card["card"]
+        entry = index.get(name)
+        if entry:
+            lines.append(f"{card['position']}. {name}（{card['orientation']}）\n{entry}")
+        else:
+            lines.append(
+                f"{card['position']}. {name}（{card['orientation']}）\n"
+                f"- **資料なし**：{IMAGERY_FILE} にこのカードの項目がありません。"
+                "図像の細部を推測で語らず、資料が無いことを正直に伝えてください。"
+            )
+    return "\n\n".join(lines)

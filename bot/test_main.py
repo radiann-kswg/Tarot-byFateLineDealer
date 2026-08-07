@@ -94,9 +94,34 @@ class ReadingCaseMixin:
 
         reading_mod.generate = fake_generate
 
+        # 持ち込み・解説の3経路も差し替える（AGENTS.md §6.6）
+        self.emoji_calls: list[dict] = []
+        self._original_emoji_generators = {
+            name: getattr(reading_mod, name)
+            for name in ("generate_brought", "generate_meaning", "generate_imagery")
+        }
+
+        def make_fake(mode, takes_spread):
+            def fake(config, theme, *args):
+                spread = args[0] if takes_spread else None
+                cards = args[2] if takes_spread else args[0]
+                self.emoji_calls.append({
+                    "mode": mode, "theme": theme, "spread": spread,
+                    "cards": cards, "sensitive": args[-1],
+                })
+                return Reading(text=f"（{mode} の応答）", input_tokens=100, output_tokens=50,
+                               cache_read_tokens=0, cache_write_tokens=100)
+            return fake
+
+        reading_mod.generate_brought = make_fake("brought", takes_spread=True)
+        reading_mod.generate_meaning = make_fake("meaning", takes_spread=False)
+        reading_mod.generate_imagery = make_fake("imagery", takes_spread=False)
+
     def tearDown(self):
         tarot.IMAGE_DIR = self._original_image_dir
         reading_mod.generate = self._original_generate
+        for name, func in self._original_emoji_generators.items():
+            setattr(reading_mod, name, func)
         self._tmp.cleanup()
 
     def handle(self, notif, live=True):
@@ -223,6 +248,87 @@ class FoldingTests(ReadingCaseMixin, unittest.TestCase):
         self.config = make_config(self.config.state_path, fold_reading=False)
         self.handle(notification("恋愛のことで悩んでいます"))
         self.assertIsNone(self.client.notes[0]["cw"])
+
+
+class EmojiMentionTests(ReadingCaseMixin, unittest.TestCase):
+    """カード絵文字つきのメンション（AGENTS.md §4-7・§6.6）。"""
+
+    def test_brought_cards_are_never_redrawn(self):
+        self.assertTrue(self.handle(notification(
+            "@mai :tarot_m00: :tarot_w03_r: :tarot_s14: 引いてみたんだけど、どう思う？")))
+        self.assertEqual([], self.generate_calls, "持ち込みなのに抽選の経路へ流れている")
+        self.assertEqual(1, len(self.emoji_calls))
+        call = self.emoji_calls[0]
+        self.assertEqual("brought", call["mode"])
+        self.assertEqual("three", call["spread"], "3枚ならスリーカードと推定する")
+        self.assertEqual(["愚者", "ワンドの3", "ソードのキング"],
+                         [c["card"] for c in call["cards"]])
+        self.assertEqual(["正位置", "逆位置", "正位置"],
+                         [c["orientation"] for c in call["cards"]])
+
+    def test_brought_reading_is_folded_and_has_one_image(self):
+        self.handle(notification("@mai :tarot_m00: :tarot_m01: :tarot_m02: 引いてみた"))
+        note = self.client.notes[0]
+        self.assertIsNotNone(note["cw"], "持ち込みの読み解きは畳む（§6.1-3）")
+        self.assertEqual(1, len(note["fileIds"]), "合成画像を1枚つける（§6.1-6）")
+
+    def test_meaning_is_not_a_reading_and_is_not_folded(self):
+        self.handle(notification("@mai :tarot_m18: の意味を教えて"))
+        self.assertEqual([], self.generate_calls)
+        self.assertEqual("meaning", self.emoji_calls[0]["mode"])
+        self.assertEqual(["月"], [c["card"] for c in self.emoji_calls[0]["cards"]])
+        note = self.client.notes[0]
+        self.assertIsNone(note["cw"], "解説は占いではないので畳まない（§6.6）")
+        self.assertEqual(1, len(note["fileIds"]))
+
+    def test_imagery_question_routes_to_the_imagery_source(self):
+        self.handle(notification("@mai :tarot_m18: の絵は何が描かれてるの？いわれも知りたい"))
+        self.assertEqual("imagery", self.emoji_calls[0]["mode"])
+        self.assertIsNone(self.client.notes[0]["cw"])
+
+    def test_undecidable_shape_asks_instead_of_guessing(self):
+        self.handle(notification("@mai " + "".join(
+            f":tarot_m{i:02d}:" for i in range(5)) + " これ見て"))
+        self.assertEqual([], self.emoji_calls, "尋ねるべき場面で読み解きが走っている")
+        note = self.client.notes[0]
+        self.assertIn("5枚", note["text"])
+        self.assertIsNone(note["cw"], "確認は畳まない")
+        self.assertIsNone(note["fileIds"], "確認では画像を添付しない")
+
+    def test_role_mention_lets_it_be_read_as_a_line(self):
+        self.handle(notification("@mai " + "".join(
+            f":tarot_m{i:02d}:" for i in range(4)) + " 1枚目は過去で、順に読んでね"))
+        self.assertEqual("line", self.emoji_calls[0]["spread"])
+
+    def test_safety_wins_over_the_cards(self):
+        self.handle(notification("@mai :tarot_m13: 死にたい"))
+        self.assertEqual([], self.emoji_calls, "safety より先に占い・解説が走っている")
+        self.assertEqual([], self.generate_calls)
+        self.assertIn(self.config.support_url, self.client.notes[0]["text"])
+
+    def test_unknown_tarot_emoji_is_answered_not_ignored(self):
+        self.assertTrue(self.handle(notification("@mai :tarot_zzz: これ何？")))
+        self.assertEqual([], self.emoji_calls)
+        self.assertEqual([], self.generate_calls)
+        self.assertIn("読み取れない", self.client.notes[0]["text"])
+        self.assertIsNone(self.client.notes[0]["cw"])
+
+    def test_partially_unknown_emoji_does_not_silently_shrink_the_spread(self):
+        """読めない札が混じったら、読めたぶんだけで読み解かない（AGENTS.md §4-7）。"""
+        self.assertTrue(self.handle(notification(
+            "@mai :tarot_m00: :tarot_zzz99: :tarot_m01: 引いてみた")))
+        self.assertEqual([], self.emoji_calls, "枚数が欠けたまま読み解いている")
+        self.assertIn("読み取れない", self.client.notes[0]["text"])
+
+    def test_asking_mai_to_draw_still_draws(self):
+        self.handle(notification("@mai :tarot_m00: が出たけど、舞にも引いてほしい"))
+        self.assertEqual([], self.emoji_calls)
+        self.assertEqual(1, len(self.generate_calls), "「引いてほしい」なら通常の抽選に戻る")
+
+    def test_sensitive_topic_is_flagged_in_the_brought_path(self):
+        self.handle(notification("@mai :tarot_m00: :tarot_m01: :tarot_m02: "
+                                 "手術を受けるか迷ってて、引いてみたの"))
+        self.assertTrue(self.emoji_calls[0]["sensitive"])
 
 
 class SimulateTests(unittest.TestCase):

@@ -97,8 +97,19 @@ class RenderTests(unittest.TestCase):
 
 
 class LabelTests(unittest.TestCase):
-    def test_every_spread_has_a_label(self):
-        self.assertEqual(set(shuffle.SPREAD_COUNTS), set(tarot.SPREAD_LABELS))
+    def test_every_drawable_spread_has_a_label(self):
+        self.assertLessEqual(set(shuffle.SPREAD_COUNTS), set(tarot.SPREAD_LABELS))
+
+    def test_drawable_spreads_are_exactly_the_ones_shuffle_can_deal(self):
+        """舞が引けるのは shuffle.py が枚数を持つ型だけ。抽選の正本は shuffle.py。"""
+        self.assertEqual(set(shuffle.SPREAD_COUNTS), set(tarot.DRAWABLE_SPREADS))
+
+    def test_line_is_labelled_but_not_drawable(self):
+        """「並び」は持ち込み専用の型（AGENTS.md §6.6）。抽選には使わない。"""
+        self.assertIn("line", tarot.SPREAD_LABELS)
+        self.assertNotIn("line", tarot.DRAWABLE_SPREADS)
+        with self.assertRaises(tarot.TarotError):
+            tarot.draw("line")
 
 
 if __name__ == "__main__":

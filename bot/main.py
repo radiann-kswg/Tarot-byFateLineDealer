@@ -16,8 +16,10 @@ import time
 
 from . import reading as reading_mod
 from . import misskey as misskey_mod
+from . import emoji as emoji_mod
 from . import safety, ssot, state as state_mod, tarot
 from .config import Config, ConfigError, load_config
+from .emoji import EmojiError
 from .misskey import Misskey, MisskeyError, strip_mentions
 from .reading import ReadingError
 from .ssot import SsotError
@@ -90,11 +92,72 @@ def perform_reading(config: Config, theme: str, slug: str, spread: str | None = 
     return body, image_path, meta
 
 
-def _reading_cw(config: Config, spread_label: str) -> str | None:
-    """占い結果を畳むための CW 見出し（AGENTS.md §6.1-3）。文面の正本は §6.3。"""
+def perform_emoji_reply(config: Config, theme: str, slug: str, parsed: emoji_mod.Parsed):
+    """カード絵文字つきのメンションに応じる（AGENTS.md §4-7・§6.6）。
+
+    **抽選しない。** 相談者が持ち込んだ並びをそのまま扱う。
+
+    Returns:
+        (本文, 画像パス, メタ情報の辞書)。
+        並びの型を決めきれないときは本文が None になり、meta["ask"] に定型文IDが入る。
+    """
+    verdict = safety.screen(theme)
+    if verdict.action != "read":
+        raise AssertionError("safety の判定は呼び出し側で処理してください")
+
+    cards = parsed.cards
+    tarot.validate_cards(cards)
+    mode = parsed.mode
+
+    if mode == "brought":
+        spread, reason = emoji_mod.infer_spread(theme, len(cards))
+        if spread is None:
+            # 推測で型を当てはめず、尋ねる（AGENTS.md §6.6-3）
+            log.info("持ち込み %d 枚。並びの型を決めきれないため確認します", len(cards))
+            return None, None, {"ask": "spread-unclear", "count": len(cards), "cards": cards}
+    else:
+        # 解説は並びを問わないので、常に「並び」として合成する
+        spread, reason = emoji_mod.LINE_SPREAD, f"{mode} の解説のため並びとして扱う"
+
+    image_path = tarot.render(cards, spread, theme, slug)
+
+    if mode == "brought":
+        result = reading_mod.generate_brought(config, theme, spread, reason, cards,
+                                              verdict.sensitive)
+    elif mode == "imagery":
+        result = reading_mod.generate_imagery(config, theme, cards, verdict.sensitive)
+    else:
+        result = reading_mod.generate_meaning(config, theme, cards, verdict.sensitive)
+
+    label = tarot.SPREAD_LABELS.get(spread, spread)
+    summary = tarot.summary_line(cards)
+    log.info("持ち込み（%s）=%s(%s) カード=%s / %s",
+             mode, label, reason, summary, result.cache_note)
+
+    meta = {
+        "ask": None,
+        "mode": mode,
+        "spread": spread,
+        "spread_label": label,
+        "reason": reason,
+        "cards": cards,
+        "summary": summary,
+        "sensitive": verdict.sensitive,
+        "alt_text": f"{label}：{summary}",
+        # 占いは畳む。解説は占いではないので畳まない（AGENTS.md §6.6）
+        "fold": mode == "brought",
+    }
+    return clamp(result.text, config.max_body_chars), image_path, meta
+
+
+def _reading_cw(config: Config, spread_label: str, brought: bool = False) -> str | None:
+    """占い結果を畳むための CW 見出し（AGENTS.md §6.1-3）。文面の正本は §6.3。
+
+    持ち込みの読み解きでは、舞が引いたように読めない `cw-brought` を使う（§4-7）。
+    """
     if not config.fold_reading:
         return None
-    return ssot.template("cw-reading", spread=spread_label)
+    return ssot.template("cw-brought" if brought else "cw-reading", spread=spread_label)
 
 
 def _publish(client: Misskey | None, live: bool, body: str, image_path, alt_text: str,
@@ -126,6 +189,13 @@ def _reply_template(client: Misskey, config: Config, live: bool, template_id: st
     _publish(client, live, body, None, "", reply_id, cw=None)
 
 
+def _reply_template_fields(client: Misskey, config: Config, live: bool, template_id: str,
+                           reply_id: str, **fields: str) -> None:
+    """差し替え値のある定型文で返す（`spread-unclear` の {count} など）。**畳まない**。"""
+    body = ssot.template(template_id, support_url=config.support_url, **fields)
+    _publish(client, live, body, None, "", reply_id, cw=None)
+
+
 def handle_notification(config: Config, client: Misskey, state: state_mod.State,
                         notification: dict, live: bool) -> bool:
     """通知1件を処理する。応答したら True。"""
@@ -151,10 +221,32 @@ def handle_notification(config: Config, client: Misskey, state: state_mod.State,
              theme[:60] + ("…" if len(theme) > 60 else ""))
 
     verdict = safety.screen(theme)
+    parsed = emoji_mod.parse(theme)
+
     if verdict.action != "read":
+        # 安全性の分岐は絵文字の有無より先に効く（AGENTS.md §6.6）
         log.warning("[%s] %s に該当（%s）。占わずに定型応答します",
                     notification_id, verdict.action, verdict.matched)
         _reply_template(client, config, live, verdict.template, note_id)
+    elif parsed.unknown:
+        # 読み取れない絵文字が1つでもあれば、黙って落として枚数を変えない（AGENTS.md §4-7）。
+        # 一部だけ読めていても同じ。並びが欠けたまま型を推定するほうが害が大きい。
+        log.warning("[%s] 未知のカード絵文字 %d 個（読めた札 %d 枚）: %s", notification_id,
+                    len(parsed.unknown), len(parsed.cards), "、".join(parsed.unknown))
+        _reply_template(client, config, live, "emoji-unknown", note_id)
+    elif parsed.has_cards and not parsed.wants_draw:
+        # 持ち込み（AGENTS.md §4-7）。抽選しない
+        body, image_path, meta = perform_emoji_reply(config, theme, notification_id, parsed)
+        if meta["ask"]:
+            _reply_template_fields(client, config, live, meta["ask"], note_id,
+                                   count=str(meta["count"]))
+        else:
+            cw = (_reading_cw(config, meta["spread_label"], brought=True)
+                  if meta["fold"] else None)
+            _publish(client, live, body, image_path, meta["alt_text"], note_id, cw=cw)
+            if live and config.save_readings and meta["mode"] == "brought":
+                saved = state_mod.save_reading(theme, meta["spread_label"], meta["summary"], body)
+                log.info("[%s] 記録を保存しました: %s", notification_id, saved)
     else:
         body, image_path, meta = perform_reading(config, theme, slug=notification_id)
         _publish(client, live, body, image_path, meta["alt_text"], note_id,
@@ -208,7 +300,7 @@ def run_once(config: Config, client: Misskey, state: state_mod.State, live: bool
         try:
             if handle_notification(config, client, state, notification, live):
                 handled += 1
-        except (ReadingError, TarotError) as exc:
+        except (ReadingError, TarotError, EmojiError, SsotError) as exc:
             log.error("[%s] 読み解きに失敗: %s", notification["id"], exc)
             note_id = (notification.get("note") or {}).get("id")
             if note_id:
@@ -274,8 +366,15 @@ def cmd_check(config: Config, client: Misskey) -> int:
     prompt = ssot.build_system_prompt()
     templates = sorted(ssot.load_templates())
     deck = ssot.deck_index()
+    imagery = ssot.imagery_index()
+    emojis = emoji_mod.emoji_index()
     log.info("正本: システムプロンプト %d 文字 / 定型文 %s / デッキ %d 枚",
              len(prompt), "・".join(templates), len(deck))
+    log.info("  図像資料 %d 枚 / カード絵文字 %d 個", len(imagery), len(emojis))
+    missing = [card for card in deck if card not in imagery]
+    if missing:
+        log.warning("  図像資料が無いカードが %d 枚あります（先頭: %s）",
+                    len(missing), "、".join(missing[:3]))
     log.info("相談窓口URL = %s", config.support_url)
     return 0
 
@@ -292,6 +391,25 @@ def cmd_simulate(config: Config, text: str, spread: str | None) -> int:
         log.warning("%s に該当（%s）。占わずに定型応答します", verdict.action, verdict.matched)
         body = ssot.template(verdict.template, support_url=config.support_url)
         _publish(None, False, body, None, "", reply_id=None)
+        return 0
+
+    parsed = emoji_mod.parse(text)
+    if parsed.unknown and not parsed.has_cards:
+        log.warning("未知のカード絵文字: %s", "、".join(parsed.unknown))
+        _publish(None, False, ssot.template("emoji-unknown"), None, "", reply_id=None)
+        return 0
+    if parsed.has_cards and not parsed.wants_draw:
+        log.info("カード絵文字 %d 枚を検出しました（モード=%s）。抽選せず持ち込みとして扱います",
+                 len(parsed.cards), parsed.mode)
+        body, image_path, meta = perform_emoji_reply(config, text, "simulate", parsed)
+        if meta["ask"]:
+            _publish(None, False,
+                     ssot.template(meta["ask"], count=str(meta["count"])),
+                     None, "", reply_id=None)
+            return 0
+        cw = (_reading_cw(config, meta["spread_label"], brought=True)
+              if meta["fold"] else None)
+        _publish(None, False, body, image_path, meta["alt_text"], reply_id=None, cw=cw)
         return 0
 
     body, image_path, meta = perform_reading(config, text, slug="simulate", spread=spread)
@@ -315,7 +433,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--simulate", metavar="相談文",
                         help="メンションを待たずに、その相談文で読み解きだけ試す"
                              "（Misskey には接続しない。Claude API は呼ぶので課金あり）")
-    parser.add_argument("--spread", choices=list(tarot.SPREAD_LABELS),
+    parser.add_argument("--spread", choices=list(tarot.DRAWABLE_SPREADS),
                         help="--simulate でスプレッドを指定する（省略時は舞が選ぶ）")
     parser.add_argument("--once", action="store_true", help="1回だけポーリングして終了する")
     parser.add_argument("--limit", type=int, default=10,
@@ -354,7 +472,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             run_loop(config, client, state, live, args.limit, args.catch_up)
         return 0
-    except (MisskeyError, ReadingError, SsotError, TarotError) as exc:
+    except (MisskeyError, ReadingError, SsotError, TarotError, EmojiError) as exc:
         log.error("%s", exc)
         return 1
     except KeyboardInterrupt:

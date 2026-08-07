@@ -112,10 +112,34 @@ def _fit(text, font, max_width):
     return trimmed + "…" if trimmed else "…"
 
 
-def layout(spread):
-    """位置番号 -> (中心x, 中心y, 追加回転角) を相対座標で返す。"""
+# 「並び」レイアウトで1行に置く最大枚数。これを超えると折り返す。
+LINE_MAX_PER_ROW = 5
+
+
+def layout(spread, count=None):
+    """位置番号 -> (中心x, 中心y, 追加回転角) を相対座標で返す。
+
+    Args:
+        spread: スプレッド名。`"line"` のときだけ count が必要。
+        count: `"line"` の枚数。既定のスプレッドでは無視される。
+    """
     hg, vg = 74, 44
     pv = CARD_H + vg                      # 縦ピッチ
+    if spread == "line":
+        # 型の決まっていない「並び」。相談者が絵文字で持ち込んだ任意枚数を、
+        # 左から右へ、必要なら折り返して置く（AGENTS.md §6.6）。
+        if not count or count < 1:
+            raise ValueError("line レイアウトには1枚以上の count が必要です")
+        px = CARD_W + hg
+        per_row = min(count, LINE_MAX_PER_ROW)
+        positions = {}
+        for index in range(count):
+            row, col = divmod(index, per_row)
+            in_row = min(per_row, count - row * per_row)
+            # 各行を中央寄せする（最終行が短いときに左に寄らないように）
+            x = (col - (in_row - 1) / 2) * px
+            positions[index + 1] = (x, row * pv, 0)
+        return positions
     if spread == "one":
         return {1: (0, 0, 0)}
     if spread == "two":
@@ -178,7 +202,7 @@ def draw_badge(base, cx, cy, num):
 
 
 def render(cards, spread, title, out_path, root):
-    lay = layout(spread)
+    lay = layout(spread, count=len(cards))
     by_pos = {c["position"]: c for c in cards}
     missing = sorted(set(lay) - set(by_pos))
     extra = sorted(set(by_pos) - set(lay))
