@@ -17,15 +17,22 @@
                                   [bot/main.py]
    1. 通知取得・重複排除・クールダウン      state.py
    2. 安全性スクリーニング                 safety.py   ← 該当時は占わず定型応答へ
-   3. スプレッド決定（キーワード or 舞が選ぶ） tarot.py
-   4. 抽選＋陣形画像生成                   tarot.py    ← procedures/ をそのまま import
-   5. システムプロンプト組み立て            ssot.py     ← 正本を実行時に読む
-   6. Claude Messages API で読み解き生成    reading.py
-   7. drive/files/create → notes/create    misskey.py
+   3. カード絵文字の解析・モード判定         emoji.py    ← 絵文字があれば抽選せず「持ち込み」へ
+   4. スプレッド決定（キーワード or 舞が選ぶ） tarot.py
+   5. 抽選＋陣形画像生成                   tarot.py    ← procedures/ をそのまま import
+   6. システムプロンプト組み立て            ssot.py     ← 正本を実行時に読む
+   7. Claude Messages API で読み解き生成    reading.py
+   8. drive/files/create → notes/create    misskey.py
 ```
 
 **抽選と読み解きは分離してあります。** カードは `procedures/shuffle.py`（`secrets` による暗号学的乱数）で引き、
 Claude には「もう引かれたカード」を渡すだけです。Claude にカードを選ばせません（AGENTS.md §4-1・§4-6）。
+
+**カード絵文字での相談にも応じます。** 相談者が `:tarot_m00:`（正位置）や `:tarot_m00_r:`（逆位置）を
+本文に貼ってきたら、舞は**引き直しません**。持ち込まれた並びをそのまま扱い、本文から
+「意味の解説」「持ち込みの読み解き」「図像の解説」のどれを求められているかを判定します
+（AGENTS.md §4-7・§6.6）。絵文字は `procedures/build_misskey_emoji.py` が作る zip を
+Misskey へインポートして用意します。
 
 `bot/ssot.py` は正本を**実行時に読み込み**ます。`roleplay.instructions.md` を書き換えれば Bot の応答も変わります
 （反映には再起動が必要）。
@@ -36,6 +43,7 @@ Claude には「もう引かれたカード」を渡すだけです。Claude に
 | `daily.py` | 「今日の一枚」定期投稿 |
 | `ssot.py` | 正本の読み込み・システムプロンプト組み立て・定型文の取り出し |
 | `tarot.py` | スプレッド決定・抽選・陣形画像生成（`procedures/` を import） |
+| `emoji.py` | カード絵文字の解析・モード判定・持ち込みの並びの型の推定（AGENTS.md §6.6） |
 | `reading.py` | Claude Messages API |
 | `misskey.py` | Misskey API |
 | `safety.py` | 相談内容のスクリーニング（判定のみ。文面は AGENTS.md §6.3） |
@@ -285,8 +293,16 @@ docker run -d --name tarot-mai --restart unless-stopped \
 ### コスト感
 
 `claude-opus-4-8` は入力 $5 / 出力 $25 per 1M トークン。
-システムプロンプトの安定部は **約 14,900 文字**（実測値。内訳は正本① 3.7k / 正本② 6.6k /
-手順書 2.7k / スプレッド資料 1.3k）で、これが毎回の入力に乗ります。
+システムプロンプトの安定部は **約 19,400 文字**（実測値。内訳は正本① 3.7k / 正本② 10.7k /
+手順書 3.1k / スプレッド資料 1.3k）で、これが毎回の入力に乗ります。
+
+> カード絵文字での相談（AGENTS.md §6.6）に対応した際、正本② が 6.6k から 10.7k へ増えました。
+> 安定部はプロンプトキャッシュに載るため、キャッシュヒット時の課金は 1/10 です。
+> 下の実測例はこの変更**前**のもので、キャッシュミス時の入力トークンは
+> 文字数に比例して 12.4k → 16k 前後に増える見込みです（未実測）。
+>
+> なお `data/card-imagery.md`（約20k文字）は安定部に**含めません**。図像を訊かれたときだけ、
+> 該当カードの項目を可変部へ載せます（デッキ資料と同じ方針）。
 
 実測例（スリーカード1回・キャッシュミス時）。ログにこの値が出ます。
 

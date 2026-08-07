@@ -33,7 +33,13 @@ SPREAD_LABELS = {
     "three": "スリーカード",
     "hexagram": "ヘキサグラム",
     "celtic": "ケルト十字",
+    # 型の決まらない「並び」。相談者がカスタム絵文字で持ち込んだ任意枚数を
+    # 左から順に読むときに使う（AGENTS.md §6.6）。抽選には使わない。
+    "line": "並び",
 }
+
+# 舞が抽選できるスプレッド（`line` は持ち込み専用なので含まない）。
+DRAWABLE_SPREADS = tuple(shuffle.SPREAD_COUNTS)
 
 # 相談者が明示的に指定したときに拾うキーワード（AGENTS.md §6・user 決定「キーワード指定＋既定は舞が選ぶ」）
 EXPLICIT_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -141,3 +147,24 @@ def render(cards: list[dict], spread: str, theme: str, slug: str) -> Path:
 def summary_line(cards: list[dict]) -> str:
     """ログ・記録用の1行サマリ。"""
     return " / ".join(f"{c['position']}.{c['card']}（{c['orientation']}）" for c in cards)
+
+
+def validate_cards(cards: list[dict]) -> None:
+    """持ち込まれたカードが描画・読み解きに使える形かを確かめる。
+
+    抽選を経ていない（相談者が絵文字で持ち込んだ）並びを受けるため、
+    ここで一度だけ形を検める。AGENTS.md §4-7 に従い、内容は書き換えない。
+    """
+    if not cards:
+        raise TarotError("カードが1枚もありません")
+    positions = [card["position"] for card in cards]
+    if positions != list(range(1, len(cards) + 1)):
+        raise TarotError(f"位置番号が1から連番になっていません: {positions}")
+    deck = set(shuffle.build_deck())
+    for card in cards:
+        if card["card"] not in deck:
+            raise TarotError(f"デッキに無いカードです: {card['card']}")
+        if not card["orientation"].startswith(("正", "逆")):
+            raise TarotError(f"向きが不正です: {card['orientation']}")
+        if not (PROJECT_ROOT / card["image"]).is_file():
+            raise TarotError(f"カード画像が見つかりません: {card['image']}")
