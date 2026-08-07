@@ -65,6 +65,9 @@ user が占いを希望したら、[`procedures/reading-procedure.md`](procedure
 - **シャッフルスクリプト**：[`procedures/shuffle.py`](procedures/shuffle.py) — 乱数で公正にカードを引く
 - **陣形画像スクリプト**：[`procedures/render_spread.py`](procedures/render_spread.py) — 2枚以上を陣形のまま1枚に合成し、カード画像の出典表記を焼き込む
 - **カード画像**：`assets/cards-rws/` — 仮登録したRWS原作画像（権利情報を同梱）
+- **絵文字ビルダー**：[`procedures/build_misskey_emoji.py`](procedures/build_misskey_emoji.py) — カード画像から、正位置・逆位置あわせて156個の
+  Misskey カスタム絵文字インポート用 zip を作る。出力先は `exports/`（`.gitignore` 済み）。
+  権利表記は原画のパブリックドメインと、画像データ取得元の MIT ライセンスの**両方**を明記すること
 - **占い記録**：`readings/` — 希望があれば結果を日付つきで保存
 - **Misskey Bot**：[`bot/`](bot/) — メンションに応じて占い、陣形画像つきで返信する常駐プログラム。
   運用ルールは本ファイル §6、起動・デプロイ手順は [`bot/README.md`](bot/README.md)

@@ -14,3 +14,6 @@ readings/
 # Misskey Bot
 .env
 bot/state/
+
+# 生成物（Misskey カスタム絵文字の zip など。サイズが大きいのでコミットしない）
+exports/
